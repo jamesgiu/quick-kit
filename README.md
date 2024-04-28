@@ -1,6 +1,17 @@
-# quick-kit
-Program to execute `kubectl` commands on a matching pod resource, using regex.
+<div align="center">
+   <img src="https://github.com/jamesgiu/quick-kit/assets/13777223/56807215-2da2-43ef-8f5d-1880eca8cae3" width="300" />
+</div>
 
+<h3 align="center">qk
+</h3>
+  <p align="center">
+    Untested, undocumented, unapologetic utility program to execute `kubectl` commands on a matching pod resource.
+    <br />
+  </p>
+</div>
+<hr/>
+
+# quick-kit
 ```bash
 Usage: qk <MATCHER>
 

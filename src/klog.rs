@@ -1,4 +1,4 @@
-use std::io;
+use std::{fs, io};
 use std::process::{Command};
 use std::time::{Duration, Instant};
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode};
@@ -54,15 +54,15 @@ pub(crate) fn klog(target: FoundPod) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn get_pod_logs(pod: &FoundPod) -> anyhow::Result<String> {
+fn get_pod_logs(pod: &FoundPod, lite: bool, last_container: bool) -> anyhow::Result<String> {
     let output = {
         Command::new("kubectl")
             .arg("logs")
             .arg(&pod.name)
             .arg("-n")
             .arg(&pod.namespace)
-            .arg("--timestamps=true")
-            .arg("--tail=500")
+            .arg(if lite {"--tail=500"} else {"--tail=-1"})
+            .arg(if last_container {"--previous=true"} else {"--previous=false"})
             .output()
             .expect("failed to execute process")
     };
@@ -126,6 +126,22 @@ fn exec_into_pod(pod: &FoundPod) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn open_in_vim(pod: &FoundPod) -> anyhow::Result<()> {
+    let logs = get_pod_logs(pod, false, false).unwrap();
+    let name = &pod.name;
+    let fname = format!("/tmp/klog_{name}");
+    fs::write(&fname, logs).expect("Unable to write file");
+    let _output = {
+        Command::new("vim")
+            .arg(&fname)
+            .spawn()
+            .unwrap()
+            .wait()
+            .expect("failed to execute process")
+    };
+
+    Ok(())
+}
 fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app: App,
@@ -134,21 +150,28 @@ fn run_app<B: Backend>(
 ) -> io::Result<()> {
     let mut last_tick = Instant::now();
     let mut fetch_new_logs = false;
+    let mut fetch_prev_container_logs = false;
     let mut delete_pod_next_tick = false;
     let mut reset_scroll = true;
 
-    let mut logs = get_pod_logs(target).unwrap();
+    let mut logs = get_pod_logs(target, true, false).unwrap();
 
     loop {
         if reset_scroll {
             if logs.lines().count() > 0 {
-                app.vertical_scroll = logs.lines().count() - ( logs.lines().count() / 100);
+                app.vertical_scroll = logs.lines().count() - 1;
             }
             reset_scroll = false;
         }
 
+        if fetch_prev_container_logs {
+            logs = get_pod_logs(target, true, true).unwrap();
+            fetch_prev_container_logs = false;
+            reset_scroll = true
+        }
+
         if fetch_new_logs {
-            logs = get_pod_logs(target).unwrap();
+            logs = get_pod_logs(target, true, false).unwrap();
             fetch_new_logs = false;
             reset_scroll = true
         }
@@ -175,21 +198,34 @@ fn run_app<B: Backend>(
                     },
                     KeyCode::Char('d') => {
                         logs = describe_pod(target).unwrap();
+                        app.vertical_scroll = 0;
                     },
                     KeyCode::Char('e') => {
                         terminal.clear().unwrap();
                         exec_into_pod(target).unwrap();
                         terminal.clear().unwrap();
                     },
+                    KeyCode::Char('v') => {
+                        terminal.clear().unwrap();
+                        open_in_vim(target).unwrap();
+                        terminal.clear().unwrap();
+                    },
+                    KeyCode::Char('l') => {
+                        fetch_prev_container_logs = true;
+                    },
                     KeyCode::Char('j') | KeyCode::Down => {
-                        app.vertical_scroll = app.vertical_scroll.saturating_add(1);
-                        app.vertical_scroll_state =
-                            app.vertical_scroll_state.position(app.vertical_scroll);
+                        if app.vertical_scroll + 1 < logs.lines().count() {
+                            app.vertical_scroll = app.vertical_scroll.saturating_add(1);
+                            app.vertical_scroll_state =
+                                app.vertical_scroll_state.position(app.vertical_scroll);
+                        }
                     }
                     KeyCode::PageDown => {
-                        app.vertical_scroll = app.vertical_scroll.saturating_add(20);
-                        app.vertical_scroll_state =
-                            app.vertical_scroll_state.position(app.vertical_scroll);
+                        if app.vertical_scroll + 20 < logs.lines().count() {
+                            app.vertical_scroll = app.vertical_scroll.saturating_add(20);
+                            app.vertical_scroll_state =
+                                app.vertical_scroll_state.position(app.vertical_scroll);
+                        }
                     }
                     KeyCode::Char('k') | KeyCode::Up => {
                         app.vertical_scroll = app.vertical_scroll.saturating_sub(1);
@@ -221,9 +257,11 @@ fn ui(f: &mut Frame, app: &mut App, target: &FoundPod, logs: &str) {
     pgUp pgDown to scroll furiously.\n
     Press 'q' to quit.\n
     Press 'f' to fetch new logs.\n
-    Press 'd' to fetch pod description\n
+    Press 'l' to fetch the last container's logs.\n
+    Press 'd' to fetch pod description.\n
     Press 'e' to exec into the pod.\n
-    Press 'p' to delete the pod.\n";
+    Press 'p' to delete the pod.\n
+    Press 'v' to open the full logs in vim.\n";
 
     let chunks = Layout::horizontal([
         Constraint::Min(1),

@@ -28,5 +28,6 @@ Requires `kubectl` to be installed on the host Linux machine.
 
 # Screenshots
 
-![image](https://github.com/jamesgiu/quick-kit/assets/13777223/dc5201a8-c903-4ea6-a9db-9618547cd564)
-![image](https://github.com/jamesgiu/quick-kit/assets/13777223/0ff2a6bd-eeee-41c0-b2f8-7a2cd55639af)
+![image](https://github.com/jamesgiu/quick-kit/assets/13777223/b8f38f52-78c3-401d-8bfa-2382e2375ed1)
+![image](https://github.com/jamesgiu/quick-kit/assets/13777223/209d4014-a280-41c2-a706-a0b49fd01718)
+

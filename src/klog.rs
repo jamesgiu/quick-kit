@@ -1,15 +1,15 @@
 use std::{fs, io};
-use std::process::{Command};
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode};
 use crossterm::{event, execute};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::{Frame, Terminal};
-use ratatui::layout::{Constraint, Layout};
+use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Stylize;
 use ratatui::style::{Color, Style};
-use ratatui::widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
+use ratatui::widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use crate::{FoundPod};
 
 #[derive(Default)]
@@ -18,6 +18,7 @@ struct App {
     pub horizontal_scroll_state: ScrollbarState,
     pub vertical_scroll: usize,
     pub horizontal_scroll: usize,
+    pub show_pod_deleted_pop_up: bool,
 }
 
 pub(crate) fn klog(target: FoundPod) -> anyhow::Result<()> {
@@ -89,6 +90,32 @@ fn describe_pod(pod: &FoundPod) -> anyhow::Result<String> {
     Ok(describe)
 }
 
+fn get_pods(pod: &FoundPod) -> anyhow::Result<String> {
+    let output = {
+        Command::new("kubectl")
+            .arg("get")
+            .arg("pods")
+            .arg("-n")
+            .arg(&pod.namespace)
+            .arg("--sort-by=.status.startTime")
+            .arg("--no-headers")
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap()
+    };
+
+    let tac = {
+        Command::new("tac")
+            .stdin(Stdio::from(output.stdout.unwrap()))
+            .output()
+            .expect("failed to execute process")
+    };
+
+    let describe = String::from_utf8(tac.stdout).unwrap().to_string();
+
+    Ok(describe)
+}
+
 fn delete_pod(pod: &FoundPod) -> anyhow::Result<String> {
     let output = {
         Command::new("kubectl")
@@ -154,36 +181,37 @@ fn run_app<B: Backend>(
     let mut delete_pod_next_tick = false;
     let mut reset_scroll = true;
 
-    let mut logs = get_pod_logs(target, true, false).unwrap();
+    let mut text = get_pod_logs(target, true, false).unwrap();
 
     loop {
         if reset_scroll {
-            if logs.lines().count() > 0 {
-                app.vertical_scroll = logs.lines().count() - 1;
+            if text.lines().count() > 0 {
+                app.vertical_scroll = text.lines().count() - 1;
             }
             reset_scroll = false;
         }
 
         if fetch_prev_container_logs {
-            logs = get_pod_logs(target, true, true).unwrap();
+            text = get_pod_logs(target, true, true).unwrap();
             fetch_prev_container_logs = false;
-            reset_scroll = true
+            reset_scroll = true;
         }
 
         if fetch_new_logs {
-            logs = get_pod_logs(target, true, false).unwrap();
+            text = get_pod_logs(target, true, false).unwrap();
             fetch_new_logs = false;
-            reset_scroll = true
+            reset_scroll = true;
         }
 
         if delete_pod_next_tick {
-            logs = logs + "\nDeleted :(. Press 'q' to quit.";
+            text = text + "\nDeleted :(. Press 'q' to quit.";
+            app.show_pod_deleted_pop_up = true;
             delete_pod(target).unwrap();
             delete_pod_next_tick = false;
             reset_scroll = true;
         }
 
-        terminal.draw(|f| ui(f, &mut app, &target, &logs))?;
+        terminal.draw(|f| ui(f, &mut app, &target, &text))?;
 
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
         if crossterm::event::poll(timeout)? {
@@ -194,10 +222,14 @@ fn run_app<B: Backend>(
                         fetch_new_logs = true
                     },
                     KeyCode::Char('p') => {
-                        delete_pod_next_tick = true
+                        delete_pod_next_tick = true;
                     },
                     KeyCode::Char('d') => {
-                        logs = describe_pod(target).unwrap();
+                        text = describe_pod(target).unwrap();
+                        app.vertical_scroll = 0;
+                    },
+                    KeyCode::Char('w') => {
+                        text = get_pods(target).unwrap();
                         app.vertical_scroll = 0;
                     },
                     KeyCode::Char('e') => {
@@ -214,14 +246,14 @@ fn run_app<B: Backend>(
                         fetch_prev_container_logs = true;
                     },
                     KeyCode::Char('j') | KeyCode::Down => {
-                        if app.vertical_scroll + 1 < logs.lines().count() {
+                        if app.vertical_scroll + 1 < text.lines().count() {
                             app.vertical_scroll = app.vertical_scroll.saturating_add(1);
                             app.vertical_scroll_state =
                                 app.vertical_scroll_state.position(app.vertical_scroll);
                         }
                     }
                     KeyCode::PageDown => {
-                        if app.vertical_scroll + 20 < logs.lines().count() {
+                        if app.vertical_scroll + 20 < text.lines().count() {
                             app.vertical_scroll = app.vertical_scroll.saturating_add(20);
                             app.vertical_scroll_state =
                                 app.vertical_scroll_state.position(app.vertical_scroll);
@@ -247,21 +279,15 @@ fn run_app<B: Backend>(
     }
 }
 
-fn ui(f: &mut Frame, app: &mut App, target: &FoundPod, logs: &str) {
+fn ui(f: &mut Frame, app: &mut App, target: &FoundPod, text: &str) {
     let size = f.size();
     let pod_name = &target.name;
     let pod_ns = &target.namespace;
 
     let details_content ="
-    ▲ ▼ j k to scroll. \n
-    pgUp pgDown to scroll furiously.\n
-    Press 'q' to quit.\n
-    Press 'f' to fetch new logs.\n
-    Press 'l' to fetch the last container's logs.\n
-    Press 'd' to fetch pod description.\n
-    Press 'e' to exec into the pod.\n
-    Press 'p' to delete the pod.\n
-    Press 'v' to open the full logs in vim.\n";
+    <▲ ▼ j k>\n<pgUp pgDown> - scroll \n\n <q> - quit\n
+    <f> - new logs\n  <l> - last logs\n  <v> - open in vim\n <d> - description\n\n
+    <e> - exec \n <p> - delete \n <w> - get pods";
 
     let chunks = Layout::horizontal([
         Constraint::Min(1),
@@ -270,8 +296,8 @@ fn ui(f: &mut Frame, app: &mut App, target: &FoundPod, logs: &str) {
     ])
         .split(size);
 
-    app.vertical_scroll_state = app.vertical_scroll_state.content_length(logs.len());
-    app.horizontal_scroll_state = app.horizontal_scroll_state.content_length(logs.len());
+    app.vertical_scroll_state = app.vertical_scroll_state.content_length(text.len());
+    app.horizontal_scroll_state = app.horizontal_scroll_state.content_length(text.len());
 
     let details = Paragraph::new(details_content)
         .gray()
@@ -282,7 +308,7 @@ fn ui(f: &mut Frame, app: &mut App, target: &FoundPod, logs: &str) {
         .wrap(Wrap { trim: true });
     f.render_widget(details, chunks[1]);
 
-    let paragraph = Paragraph::new(logs)
+    let paragraph = Paragraph::new(text)
         .gray()
         .block(
             Block::bordered().gray().title(format!("🤖 {pod_ns}/{pod_name}").to_owned().bold()
@@ -298,4 +324,29 @@ fn ui(f: &mut Frame, app: &mut App, target: &FoundPod, logs: &str) {
         chunks[2],
         &mut app.vertical_scroll_state,
     );
+
+    if app.show_pod_deleted_pop_up {
+        let block = Block::bordered().title("💬 Alert").on_blue();
+        let message =  Paragraph::new("Pod deleted! Press 'q' to quit. :(".white()).wrap(Wrap { trim: true });
+        let area = centered_rect(60, 20, f.size());
+        f.render_widget(Clear, area); //this clears out the background
+        f.render_widget(message.clone().block(block), area);
+    }
+}
+
+/// helper function to create a centered rect using up certain percentage of the available rect `r`
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::vertical([
+        Constraint::Percentage((100 - percent_y) / 2),
+        Constraint::Percentage(percent_y),
+        Constraint::Percentage((100 - percent_y) / 2),
+    ])
+        .split(r);
+
+    Layout::horizontal([
+        Constraint::Percentage((100 - percent_x) / 2),
+        Constraint::Percentage(percent_x),
+        Constraint::Percentage((100 - percent_x) / 2),
+    ])
+        .split(popup_layout[1])[1]
 }

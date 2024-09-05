@@ -14,6 +14,7 @@ struct Args {
     matcher: String
 }
 
+#[derive(Default)]
 struct FoundPod {
     name: String,
     namespace: String

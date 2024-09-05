@@ -10,7 +10,7 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Stylize;
 use ratatui::style::{Color, Style};
 use ratatui::widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
-use crate::{FoundPod};
+use crate::{find_matching_pod, FoundPod};
 
 #[derive(Default)]
 struct App {
@@ -19,6 +19,9 @@ struct App {
     pub vertical_scroll: usize,
     pub horizontal_scroll: usize,
     pub show_pod_deleted_pop_up: bool,
+    pub new_pod_search_pop_up: bool,
+    pub input_text: String,
+    pub target_pod: FoundPod,
 }
 
 pub(crate) fn klog(target: FoundPod) -> anyhow::Result<()> {
@@ -36,8 +39,9 @@ pub(crate) fn klog(target: FoundPod) -> anyhow::Result<()> {
 
     // create app and run it
     let tick_rate = Duration::from_millis(250);
-    let app = App::default();
-    let res = run_app(&mut terminal, app, tick_rate, &target);
+    let mut app = App::default();
+    app.target_pod = target;
+    let res = run_app(&mut terminal, app, tick_rate);
 
     // restore terminal
     disable_raw_mode()?;
@@ -111,9 +115,14 @@ fn get_pods(pod: &FoundPod) -> anyhow::Result<String> {
             .expect("failed to execute process")
     };
 
-    let describe = String::from_utf8(tac.stdout).unwrap().to_string();
+    let pods = String::from_utf8(tac.stdout).unwrap().
+        replace("Running", "Running ✔️").
+        replace("Terminating", "Terminating 💀️").
+        replace("BackOff", "BackOff 🔥️").
+        replace("Creating", "Creating ✨️")
+            .to_string();
 
-    Ok(describe)
+    Ok(pods)
 }
 
 fn delete_pod(pod: &FoundPod) -> anyhow::Result<String> {
@@ -172,16 +181,14 @@ fn open_in_vim(pod: &FoundPod) -> anyhow::Result<()> {
 fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app: App,
-    tick_rate: Duration,
-    target: &FoundPod
+    tick_rate: Duration
 ) -> io::Result<()> {
     let mut last_tick = Instant::now();
     let mut fetch_new_logs = false;
     let mut fetch_prev_container_logs = false;
     let mut delete_pod_next_tick = false;
     let mut reset_scroll = true;
-
-    let mut text = get_pod_logs(target, true, false).unwrap();
+    let mut text = get_pod_logs(&app.target_pod, true, false).unwrap();
 
     loop {
         if reset_scroll {
@@ -192,13 +199,13 @@ fn run_app<B: Backend>(
         }
 
         if fetch_prev_container_logs {
-            text = get_pod_logs(target, true, true).unwrap();
+            text = get_pod_logs(&app.target_pod, true, true).unwrap();
             fetch_prev_container_logs = false;
             reset_scroll = true;
         }
 
         if fetch_new_logs {
-            text = get_pod_logs(target, true, false).unwrap();
+            text = get_pod_logs(&app.target_pod, true, false).unwrap();
             fetch_new_logs = false;
             reset_scroll = true;
         }
@@ -206,70 +213,96 @@ fn run_app<B: Backend>(
         if delete_pod_next_tick {
             text = text + "\nDeleted :(. Press 'q' to quit.";
             app.show_pod_deleted_pop_up = true;
-            delete_pod(target).unwrap();
+            delete_pod(&app.target_pod).unwrap();
             delete_pod_next_tick = false;
             reset_scroll = true;
         }
 
-        terminal.draw(|f| ui(f, &mut app, &target, &text))?;
+        terminal.draw(|f| ui(f, &mut app, &text))?;
 
         let timeout = tick_rate.saturating_sub(last_tick.elapsed());
         if crossterm::event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') => return Ok(()),
-                    KeyCode::Char('f') => {
-                        fetch_new_logs = true
-                    },
-                    KeyCode::Char('p') => {
-                        delete_pod_next_tick = true;
-                    },
-                    KeyCode::Char('d') => {
-                        text = describe_pod(target).unwrap();
-                        app.vertical_scroll = 0;
-                    },
-                    KeyCode::Char('w') => {
-                        text = get_pods(target).unwrap();
-                        app.vertical_scroll = 0;
-                    },
-                    KeyCode::Char('e') => {
-                        terminal.clear().unwrap();
-                        exec_into_pod(target).unwrap();
-                        terminal.clear().unwrap();
-                    },
-                    KeyCode::Char('v') => {
-                        terminal.clear().unwrap();
-                        open_in_vim(target).unwrap();
-                        terminal.clear().unwrap();
-                    },
-                    KeyCode::Char('l') => {
-                        fetch_prev_container_logs = true;
-                    },
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        if app.vertical_scroll + 1 < text.lines().count() {
-                            app.vertical_scroll = app.vertical_scroll.saturating_add(1);
+                if app.new_pod_search_pop_up {
+                    match key.code {
+                        KeyCode::Char(to_insert) => {
+                            app.input_text.insert(app.input_text.len(), to_insert);
+                        },
+                        KeyCode::Esc => {
+                            app.new_pod_search_pop_up = false;
+                            app.input_text.clear();
+                        }
+                        KeyCode::Enter => {
+                            app.new_pod_search_pop_up = false;
+                            app.target_pod = find_matching_pod(app.input_text.as_str()).unwrap();
+                            fetch_new_logs = true;
+                            app.vertical_scroll = 0;
+                            app.input_text.clear();
+                        }
+                        KeyCode::Backspace => {
+                            app.input_text.pop();
+                        }
+                        _ => {}
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Char('q') => return Ok(()),
+                        KeyCode::Char('s') => {
+                            app.new_pod_search_pop_up = true
+                        }
+                        KeyCode::Char('f') => {
+                            fetch_new_logs = true
+                        },
+                        KeyCode::Char('p') => {
+                            delete_pod_next_tick = true;
+                        },
+                        KeyCode::Char('d') => {
+                            text = describe_pod(&app.target_pod).unwrap();
+                            app.vertical_scroll = 0;
+                        },
+                        KeyCode::Char('w') => {
+                            text = get_pods(&app.target_pod).unwrap();
+                            app.vertical_scroll = 0;
+                        },
+                        KeyCode::Char('e') => {
+                            terminal.clear().unwrap();
+                            exec_into_pod(&app.target_pod).unwrap();
+                            terminal.clear().unwrap();
+                        },
+                        KeyCode::Char('v') => {
+                            terminal.clear().unwrap();
+                            open_in_vim(&app.target_pod).unwrap();
+                            terminal.clear().unwrap();
+                        },
+                        KeyCode::Char('l') => {
+                            fetch_prev_container_logs = true;
+                        },
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            if app.vertical_scroll + 1 < text.lines().count() {
+                                app.vertical_scroll = app.vertical_scroll.saturating_add(1);
+                                app.vertical_scroll_state =
+                                    app.vertical_scroll_state.position(app.vertical_scroll);
+                            }
+                        }
+                        KeyCode::PageDown => {
+                            if app.vertical_scroll + 20 < text.lines().count() {
+                                app.vertical_scroll = app.vertical_scroll.saturating_add(20);
+                                app.vertical_scroll_state =
+                                    app.vertical_scroll_state.position(app.vertical_scroll);
+                            }
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            app.vertical_scroll = app.vertical_scroll.saturating_sub(1);
                             app.vertical_scroll_state =
                                 app.vertical_scroll_state.position(app.vertical_scroll);
                         }
-                    }
-                    KeyCode::PageDown => {
-                        if app.vertical_scroll + 20 < text.lines().count() {
-                            app.vertical_scroll = app.vertical_scroll.saturating_add(20);
+                        KeyCode::PageUp => {
+                            app.vertical_scroll = app.vertical_scroll.saturating_sub(20);
                             app.vertical_scroll_state =
                                 app.vertical_scroll_state.position(app.vertical_scroll);
                         }
+                        _ => {}
                     }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        app.vertical_scroll = app.vertical_scroll.saturating_sub(1);
-                        app.vertical_scroll_state =
-                            app.vertical_scroll_state.position(app.vertical_scroll);
-                    }
-                    KeyCode::PageUp => {
-                        app.vertical_scroll = app.vertical_scroll.saturating_sub(20);
-                        app.vertical_scroll_state =
-                            app.vertical_scroll_state.position(app.vertical_scroll);
-                    }
-                    _ => {}
                 }
             }
         }
@@ -279,15 +312,15 @@ fn run_app<B: Backend>(
     }
 }
 
-fn ui(f: &mut Frame, app: &mut App, target: &FoundPod, text: &str) {
+fn ui(f: &mut Frame, app: &mut App, text: &str) {
     let size = f.size();
-    let pod_name = &target.name;
-    let pod_ns = &target.namespace;
+    let pod_name = &app.target_pod.name;
+    let pod_ns = &app.target_pod.namespace;
 
     let details_content ="
     <▲ ▼ j k>\n<pgUp pgDown> - scroll \n\n <q> - quit\n
     <f> - new logs\n  <l> - last logs\n  <v> - open in vim\n <d> - description\n\n
-    <e> - exec \n <p> - delete \n <w> - get pods";
+    <e> - exec \n <p> - delete \n <w> - get pods \n <s> - switch pod";
 
     let chunks = Layout::horizontal([
         Constraint::Min(1),
@@ -331,6 +364,19 @@ fn ui(f: &mut Frame, app: &mut App, target: &FoundPod, text: &str) {
         let area = centered_rect(60, 20, f.size());
         f.render_widget(Clear, area); //this clears out the background
         f.render_widget(message.clone().block(block), area);
+    }
+
+    if app.new_pod_search_pop_up {
+        let block = Block::bordered().title("🔎 Enter new pod matcher (ESC to close)").on_yellow();
+        let area = centered_rect(60, 20, f.size());
+
+        let input = Paragraph::new(app.input_text.as_str().white())
+            .style(
+                Style::default().bg(Color::Yellow)
+            );
+
+        f.render_widget(Clear, area); //this clears out the background
+        f.render_widget(input.block(block), area);
     }
 }
 

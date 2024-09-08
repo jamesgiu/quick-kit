@@ -116,10 +116,10 @@ fn get_pods(pod: &FoundPod) -> anyhow::Result<String> {
     };
 
     let pods = String::from_utf8(tac.stdout).unwrap().
-        replace("Running", "Running ✔️").
-        replace("Terminating", "Terminating 💀️").
-        replace("BackOff", "BackOff 🔥️").
-        replace("Creating", "Creating ✨️")
+        replace("Running", "✔️ Running").
+        replace("Terminating", "💀️ Terminating").
+        replace("BackOff", "🔥 BackOff").
+        replace("ContainerCreating", "✨️ ContainerCreating")
             .to_string();
 
     Ok(pods)
@@ -133,6 +133,7 @@ fn delete_pod(pod: &FoundPod) -> anyhow::Result<String> {
             .arg(&pod.name)
             .arg("-n")
             .arg(&pod.namespace)
+            .arg("--wait=false")
             .output()
             .expect("failed to execute process")
     };

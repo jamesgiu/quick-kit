@@ -118,7 +118,8 @@ fn get_pods(pod: &FoundPod) -> anyhow::Result<String> {
     let pods = String::from_utf8(tac.stdout).unwrap().
         replace("Running", "✔️ Running").
         replace("Terminating", "💀️ Terminating").
-        replace("BackOff", "🔥 BackOff").
+        replace("CrashLoopBackOff", "🔥 CrashLoopBackOff").
+        replace("ImagePullBackOff", "👻 ImagePullBackOff").
         replace("ContainerCreating", "✨️ ContainerCreating")
             .to_string();
 

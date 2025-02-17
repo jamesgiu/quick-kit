@@ -1,7 +1,7 @@
 use std::{fs, io};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
-use crossterm::event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode};
+use crossterm::event::{DisableMouseCapture, Event, KeyCode};
 use crossterm::{event, execute};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::{Backend, CrosstermBackend};
@@ -33,7 +33,7 @@ pub(crate) fn klog(target: FoundPod) -> anyhow::Result<()> {
     // setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    execute!(stdout, EnterAlternateScreen, DisableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -116,7 +116,9 @@ fn get_pods(pod: &FoundPod) -> anyhow::Result<String> {
     };
 
     let pods = String::from_utf8(tac.stdout).unwrap().
-        replace("Running", "✔️ Running").
+        replace("Running", "🏃 Running").
+        replace("Error", "❌ Error").
+        replace("Completed", "✅ Completed").
         replace("Terminating", "💀️ Terminating").
         replace("CrashLoopBackOff", "🔥 CrashLoopBackOff").
         replace("ImagePullBackOff", "👻 ImagePullBackOff").
@@ -163,6 +165,54 @@ fn exec_into_pod(pod: &FoundPod) -> anyhow::Result<()> {
 
     Ok(())
 }
+
+fn debug_pod(pod: &FoundPod) -> anyhow::Result<()> {
+    // Get image name.
+    let image_name = String::from_utf8(Command::new("kubectl")
+        .arg("get")
+        .arg("pod")
+        .arg(&pod.name)
+        .arg("-n")
+        .arg(&pod.namespace)
+        .arg("-o=jsonpath={.spec.containers[0].image}")
+        .output()
+        .unwrap()
+        .stdout).unwrap().replace("[ ", "");
+
+    let container_name = String::from_utf8(Command::new("kubectl")
+        .arg("get")
+        .arg("pod")
+        .arg(&pod.name)
+        .arg("-n")
+        .arg(&pod.namespace)
+        .arg("-o=jsonpath={.spec.containers[0].name}")
+        .output()
+        .unwrap()
+        .stdout).unwrap().replace("[ ", "");
+
+    
+    print!("{}", &image_name);
+
+    let _output = {
+        Command::new("kubectl")
+            .arg("debug")
+            .arg(&pod.name)
+            .arg("-n")
+            .arg(&pod.namespace)
+            .arg("-it")
+            .arg(format!("--image={}", &image_name))
+            .arg(format!("--target={}", &container_name))
+            .arg("--")
+            .arg("sh")
+            .spawn()
+            .unwrap()
+            .wait()
+            .expect("failed to execute process")
+    };
+
+    Ok(())
+}
+
 
 fn open_in_vim(pod: &FoundPod) -> anyhow::Result<()> {
     let logs = get_pod_logs(pod, false, false).unwrap();
@@ -271,6 +321,11 @@ fn run_app<B: Backend>(
                             exec_into_pod(&app.target_pod).unwrap();
                             terminal.clear().unwrap();
                         },
+                        KeyCode::Char('b') => {
+                            terminal.clear().unwrap();
+                            debug_pod(&app.target_pod).unwrap();
+                            terminal.clear().unwrap();
+                        },
                         KeyCode::Char('v') => {
                             terminal.clear().unwrap();
                             open_in_vim(&app.target_pod).unwrap();
@@ -322,7 +377,7 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
     let details_content ="
     <▲ ▼ j k>\n<pgUp pgDown> - scroll \n\n <q> - quit\n
     <f> - new logs\n  <l> - last logs\n  <v> - open in vim\n <d> - description\n\n
-    <e> - exec \n <p> - delete \n <w> - get pods \n <s> - switch pod";
+    <e> - exec \n <p> - delete \n <w> - get pods \n <s> - switch pod \n <b> - debug";
 
     let chunks = Layout::horizontal([
         Constraint::Min(1),

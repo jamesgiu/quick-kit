@@ -5,6 +5,7 @@ use crossterm::event::{DisableMouseCapture, Event, KeyCode};
 use crossterm::{event, execute};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::{Backend, CrosstermBackend};
+use ratatui::text::Line;
 use ratatui::{Frame, Terminal};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Stylize;
@@ -374,44 +375,37 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
     let pod_name = &app.target_pod.name;
     let pod_ns = &app.target_pod.namespace;
 
-    let details_content ="
-    <▲ ▼ j k>\n<pgUp pgDown> - scroll \n\n <q> - quit\n
-    <f> - new logs\n  <l> - last logs\n  <v> - open in vim\n <d> - description\n\n
-    <e> - exec \n <p> - delete \n <w> - get pods \n <s> - switch pod \n <b> - debug";
+    let details_content = "📜 [f]etch logs 📖 [l]ast logs 📝 [v]im ";
 
-    let chunks = Layout::horizontal([
+    let chunks = Layout::vertical([
         Constraint::Min(1),
-        Constraint::Percentage(20),
-        Constraint::Percentage(80),
+        Constraint::Percentage(100)
     ])
         .split(size);
 
     app.vertical_scroll_state = app.vertical_scroll_state.content_length(text.len());
     app.horizontal_scroll_state = app.horizontal_scroll_state.content_length(text.len());
 
-    let details = Paragraph::new(details_content)
-        .gray()
-        .block(
-            Block::bordered().gray().title("🎮 Controls").bold()
-        )
-        .style(Style::default().fg(Color::DarkGray))
-        .wrap(Wrap { trim: true });
-    f.render_widget(details, chunks[1]);
-
     let paragraph = Paragraph::new(text)
         .gray()
         .block(
-            Block::bordered().gray().title(format!("🤖 {pod_ns}/{pod_name}").to_owned().bold()
-            ))
+            Block::bordered().gray()
+            .title_top(Line::from(format!("🦀 {pod_ns}/{pod_name}")).left_aligned().bold())
+            .title_top(Line::from(format!("✖️ [q]uit")).right_aligned())
+            .title_top(Line::from(format!("🔎 [d]esc 💻 [e]xec 🔧 de[b]ug 💀 [p]urge")).centered())
+            .title_bottom(details_content).to_owned()
+            .title_bottom(Line::from(format!("⚙️ [s][w]itch")).right_aligned())
+            )
         .style(Style::default().fg(Color::Rgb(186, 186, 186)))
         .scroll((app.vertical_scroll as u16, app.horizontal_scroll as u16))
         .wrap(Wrap { trim: true });
-    f.render_widget(paragraph, chunks[2]);
+
+    f.render_widget(paragraph, chunks[1]);
     f.render_stateful_widget(
         Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
             .end_symbol(Some("↓")),
-        chunks[2],
+        chunks[1],
         &mut app.vertical_scroll_state,
     );
 

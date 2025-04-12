@@ -4,7 +4,10 @@ use std::time::{Duration, Instant};
 use crossterm::event::{DisableMouseCapture, Event, KeyCode};
 use crossterm::{event, execute};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use rand::seq::IndexedRandom;
+use rand::Rng;
 use ratatui::backend::{Backend, CrosstermBackend};
+use ratatui::text::Line;
 use ratatui::{Frame, Terminal};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Stylize;
@@ -22,6 +25,7 @@ struct App {
     pub new_pod_search_pop_up: bool,
     pub input_text: String,
     pub target_pod: FoundPod,
+    pub emoji: String,
 }
 
 pub(crate) fn klog(target: FoundPod) -> anyhow::Result<()> {
@@ -241,6 +245,14 @@ fn run_app<B: Backend>(
     let mut delete_pod_next_tick = false;
     let mut reset_scroll = true;
     let mut text = get_pod_logs(&app.target_pod, true, false).unwrap();
+    let icons = ["🐝", "🦀", "🐋", "🐧", "🦕", "🦐", "🐬", "🦞", "🤖", "🐤", "🪿"]; 
+    // Create a random number generator
+    let mut rng = rand::rng();
+
+    // Generate a random index within the array bounds
+    let index = rng.random_range(0..icons.len());
+    let emoji = icons[index];
+    app.emoji = emoji.to_string();
 
     loop {
         if reset_scroll {
@@ -374,44 +386,37 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
     let pod_name = &app.target_pod.name;
     let pod_ns = &app.target_pod.namespace;
 
-    let details_content ="
-    <▲ ▼ j k>\n<pgUp pgDown> - scroll \n\n <q> - quit\n
-    <f> - new logs\n  <l> - last logs\n  <v> - open in vim\n <d> - description\n\n
-    <e> - exec \n <p> - delete \n <w> - get pods \n <s> - switch pod \n <b> - debug";
+    let details_content = "📜 [f]etch logs 📖 [l]ast logs 📝 [v]im ";
 
-    let chunks = Layout::horizontal([
+    let chunks = Layout::vertical([
         Constraint::Min(1),
-        Constraint::Percentage(20),
-        Constraint::Percentage(80),
+        Constraint::Percentage(100)
     ])
         .split(size);
 
     app.vertical_scroll_state = app.vertical_scroll_state.content_length(text.len());
     app.horizontal_scroll_state = app.horizontal_scroll_state.content_length(text.len());
 
-    let details = Paragraph::new(details_content)
-        .gray()
-        .block(
-            Block::bordered().gray().title("🎮 Controls").bold()
-        )
-        .style(Style::default().fg(Color::DarkGray))
-        .wrap(Wrap { trim: true });
-    f.render_widget(details, chunks[1]);
-
     let paragraph = Paragraph::new(text)
         .gray()
         .block(
-            Block::bordered().gray().title(format!("🤖 {pod_ns}/{pod_name}").to_owned().bold()
-            ))
+            Block::bordered().white()
+            .title_top(Line::from(format!("{0} {pod_ns}/{pod_name}", app.emoji)).left_aligned().bold().white())
+            .title_top(Line::from(format!("[q]uit ✖️")).right_aligned().white())
+            .title_top(Line::from(format!("🔎 [d]esc 💻 [e]xec 🐞 de[b]ug 💀 [p]urge")).centered().white())
+            .title_bottom(details_content).to_owned()
+            .title_bottom(Line::from(format!("[s][w]itch ⚙️").white()).right_aligned())
+            )
         .style(Style::default().fg(Color::Rgb(186, 186, 186)))
         .scroll((app.vertical_scroll as u16, app.horizontal_scroll as u16))
         .wrap(Wrap { trim: true });
-    f.render_widget(paragraph, chunks[2]);
+
+    f.render_widget(paragraph, chunks[1]);
     f.render_stateful_widget(
         Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
             .end_symbol(Some("↓")),
-        chunks[2],
+        chunks[1],
         &mut app.vertical_scroll_state,
     );
 
@@ -424,12 +429,12 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
     }
 
     if app.new_pod_search_pop_up {
-        let block = Block::bordered().title("🔎 Enter new pod matcher (ESC to close)").on_yellow();
+        let block = Block::bordered().title("🔎 Enter new pod matcher (ESC to close)").on_black();
         let area = centered_rect(60, 20, f.size());
 
         let input = Paragraph::new(app.input_text.as_str().white())
             .style(
-                Style::default().bg(Color::Yellow)
+                Style::default().bg(Color::Black)
             );
 
         f.render_widget(Clear, area); //this clears out the background

@@ -4,6 +4,8 @@ use std::time::{Duration, Instant};
 use crossterm::event::{DisableMouseCapture, Event, KeyCode};
 use crossterm::{event, execute};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use rand::seq::IndexedRandom;
+use rand::Rng;
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::text::Line;
 use ratatui::{Frame, Terminal};
@@ -23,6 +25,7 @@ struct App {
     pub new_pod_search_pop_up: bool,
     pub input_text: String,
     pub target_pod: FoundPod,
+    pub emoji: String,
 }
 
 pub(crate) fn klog(target: FoundPod) -> anyhow::Result<()> {
@@ -242,6 +245,14 @@ fn run_app<B: Backend>(
     let mut delete_pod_next_tick = false;
     let mut reset_scroll = true;
     let mut text = get_pod_logs(&app.target_pod, true, false).unwrap();
+    let icons = ["🐝", "🦀", "🐋", "🐧", "🦕", "🦐", "🐬", "🦞", "🤖", "🐤", "🪿"]; 
+    // Create a random number generator
+    let mut rng = rand::rng();
+
+    // Generate a random index within the array bounds
+    let index = rng.random_range(0..icons.len());
+    let emoji = icons[index];
+    app.emoji = emoji.to_string();
 
     loop {
         if reset_scroll {
@@ -390,7 +401,7 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
         .gray()
         .block(
             Block::bordered().white()
-            .title_top(Line::from(format!("🦀 {pod_ns}/{pod_name}")).left_aligned().bold().white())
+            .title_top(Line::from(format!("{0} {pod_ns}/{pod_name}", app.emoji)).left_aligned().bold().white())
             .title_top(Line::from(format!("[q]uit ✖️")).right_aligned().white())
             .title_top(Line::from(format!("🔎 [d]esc 💻 [e]xec 🐞 de[b]ug 💀 [p]urge")).centered().white())
             .title_bottom(details_content).to_owned()

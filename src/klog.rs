@@ -389,12 +389,12 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
     let paragraph = Paragraph::new(text)
         .gray()
         .block(
-            Block::bordered().gray()
-            .title_top(Line::from(format!("🦀 {pod_ns}/{pod_name}")).left_aligned().bold())
-            .title_top(Line::from(format!("✖️ [q]uit")).right_aligned())
-            .title_top(Line::from(format!("🔎 [d]esc 💻 [e]xec 🔧 de[b]ug 💀 [p]urge")).centered())
+            Block::bordered().white()
+            .title_top(Line::from(format!("🦀 {pod_ns}/{pod_name}")).left_aligned().bold().white())
+            .title_top(Line::from(format!("[q]uit ✖️")).right_aligned().white())
+            .title_top(Line::from(format!("🔎 [d]esc 💻 [e]xec 🐞 de[b]ug 💀 [p]urge")).centered().white())
             .title_bottom(details_content).to_owned()
-            .title_bottom(Line::from(format!("⚙️ [s][w]itch")).right_aligned())
+            .title_bottom(Line::from(format!("[s][w]itch ⚙️").white()).right_aligned())
             )
         .style(Style::default().fg(Color::Rgb(186, 186, 186)))
         .scroll((app.vertical_scroll as u16, app.horizontal_scroll as u16))
@@ -418,12 +418,12 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
     }
 
     if app.new_pod_search_pop_up {
-        let block = Block::bordered().title("🔎 Enter new pod matcher (ESC to close)").on_yellow();
+        let block = Block::bordered().title("🔎 Enter new pod matcher (ESC to close)").on_black();
         let area = centered_rect(60, 20, f.size());
 
         let input = Paragraph::new(app.input_text.as_str().white())
             .style(
-                Style::default().bg(Color::Yellow)
+                Style::default().bg(Color::Black)
             );
 
         f.render_widget(Clear, area); //this clears out the background

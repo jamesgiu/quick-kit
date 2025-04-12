@@ -444,8 +444,7 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
         .block(
             Block::bordered().white()
             .title_top(Line::from(format!("{0} {pod_ns}/{pod_deployment}/{pod_name}", app.emoji)).left_aligned().bold().white())
-            .title_top(Line::from(format!("[q]uit ✖️")).right_aligned().white())
-            .title_top(Line::from(format!("🔎 [d]esc 💻 [e]xec ✏️ [E]dit 🐞 de[b]ug 💀 [p]urge")).centered().white())
+            .title_top(Line::from(format!("🔎 [d]esc 💻 [e]xec ✏️ [E]dit 🐞 de[b]ug 💀 [p]urge [q]uit ✖️")).right_aligned().white())
             .title_bottom(details_content).to_owned()
             .title_bottom(Line::from(format!("🗺️ [W/w]orld [s]witch ⚙️").white()).right_aligned())
             )

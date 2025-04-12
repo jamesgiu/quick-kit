@@ -4,7 +4,6 @@ use std::time::{Duration, Instant};
 use crossterm::event::{DisableMouseCapture, Event, KeyCode};
 use crossterm::{event, execute};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
-use rand::seq::IndexedRandom;
 use rand::Rng;
 use ratatui::backend::{Backend, CrosstermBackend};
 use ratatui::text::Line;
@@ -130,6 +129,39 @@ fn get_pods(pod: &FoundPod) -> anyhow::Result<String> {
             .to_string();
 
     Ok(pods)
+}
+
+fn get_all(pod: &FoundPod) -> anyhow::Result<String> {
+    let output = {
+        Command::new("kubectl")
+            .arg("get")
+            .arg("all")
+            .arg("-n")
+            .arg(&pod.namespace)
+            .arg("--no-headers")
+            .output()
+    };
+
+    let all = String::from_utf8(output.unwrap().stdout).unwrap().to_string();
+
+    Ok(all)
+}
+
+fn edit_deployment(pod: &FoundPod) -> anyhow::Result<()> {
+    let output = {
+        Command::new("kubectl")
+            .arg("edit")
+            .arg("deployment")
+            .arg(&pod.deployment)
+            .arg("-n")
+            .arg(&pod.namespace)
+            .spawn()
+            .unwrap()
+            .wait()
+            .expect("failed to execute process")
+    };
+
+    Ok(())
 }
 
 fn delete_pod(pod: &FoundPod) -> anyhow::Result<String> {
@@ -324,8 +356,17 @@ fn run_app<B: Backend>(
                             text = describe_pod(&app.target_pod).unwrap();
                             app.vertical_scroll = 0;
                         },
+                        KeyCode::Char('E') => {
+                            terminal.clear().unwrap();
+                            edit_deployment(&app.target_pod).unwrap();
+                            terminal.clear().unwrap();
+                        },
                         KeyCode::Char('w') => {
                             text = get_pods(&app.target_pod).unwrap();
+                            app.vertical_scroll = 0;
+                        },
+                        KeyCode::Char('W') => {
+                            text = get_all(&app.target_pod).unwrap();
                             app.vertical_scroll = 0;
                         },
                         KeyCode::Char('e') => {
@@ -384,9 +425,10 @@ fn run_app<B: Backend>(
 fn ui(f: &mut Frame, app: &mut App, text: &str) {
     let size = f.size();
     let pod_name = &app.target_pod.name;
+    let pod_deployment = &app.target_pod.deployment;
     let pod_ns = &app.target_pod.namespace;
 
-    let details_content = "📜 [f]etch logs 📖 [l]ast logs 📝 [v]im ";
+    let details_content = "📜 [f]etch logs 📖 [l]ast logs 📝 [v]im logs";
 
     let chunks = Layout::vertical([
         Constraint::Min(1),
@@ -401,11 +443,11 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
         .gray()
         .block(
             Block::bordered().white()
-            .title_top(Line::from(format!("{0} {pod_ns}/{pod_name}", app.emoji)).left_aligned().bold().white())
+            .title_top(Line::from(format!("{0} {pod_ns}/{pod_deployment}/{pod_name}", app.emoji)).left_aligned().bold().white())
             .title_top(Line::from(format!("[q]uit ✖️")).right_aligned().white())
-            .title_top(Line::from(format!("🔎 [d]esc 💻 [e]xec 🐞 de[b]ug 💀 [p]urge")).centered().white())
+            .title_top(Line::from(format!("🔎 [d]esc 💻 [e]xec ✏️ [E]dit 🐞 de[b]ug 💀 [p]urge")).centered().white())
             .title_bottom(details_content).to_owned()
-            .title_bottom(Line::from(format!("[s][w]itch ⚙️").white()).right_aligned())
+            .title_bottom(Line::from(format!("🗺️ [W/w]orld [s]witch ⚙️").white()).right_aligned())
             )
         .style(Style::default().fg(Color::Rgb(186, 186, 186)))
         .scroll((app.vertical_scroll as u16, app.horizontal_scroll as u16))

@@ -62,7 +62,10 @@ fn find_matching_pod(matcher: &str) -> Result<FoundPod> {
 
     let deployments = String::from_utf8(deployment_output.stdout).unwrap().to_string();
 
-    re = Regex::new(&format!(r".*{matcher}.*[A-Za-z]+ ")).unwrap();
+    // Strip numbers and dashes from the matcher
+    let sanitised_matcher = Regex::new(r"\-+[0-9]+").unwrap().replace_all(matcher, "");
+
+    re = Regex::new(&format!(r"[A-Za-z-]*{sanitised_matcher}[A-Za-z-]* ")).unwrap();
 
     let Some(deployment_matches): Option<Captures> = re.captures(&*deployments) else { todo!() };
 

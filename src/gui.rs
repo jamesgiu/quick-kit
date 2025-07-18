@@ -5,7 +5,7 @@ use crossterm::{event, execute};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use rand::Rng;
 use ratatui::backend::{Backend, CrosstermBackend};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::{Frame, Terminal};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Stylize;
@@ -15,6 +15,28 @@ use ratatui::widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarOrientation,
 
 use crate::kubectl::{self, FoundPod};
 use crate::cli::{self};
+
+pub fn render_action_text<'a>(text: &'a str, action: Action, last_action: &Option<Action>) -> Span<'a> {
+    if last_action.is_some() && action == last_action.unwrap() {
+        return format!("{text}").blue();
+    } 
+    
+    format!("{text}").white()
+}
+
+#[derive(PartialEq, Copy, Clone)]
+pub enum Action {
+    FetchLogs,
+    LastLogs,
+    VimLogs,
+    ViewDesc,
+    Exec,
+    EditDeployment,
+    Debug,
+    Purge,
+    World,
+    Switch
+}
 
 #[derive(Default)]
 struct App {
@@ -27,6 +49,7 @@ struct App {
     pub input_text: String,
     pub target_pod: FoundPod,
     pub emoji: String,
+    pub last_action: Option<Action>,
 }
 
 pub fn gui(target: FoundPod) -> Result<()> {
@@ -142,48 +165,59 @@ fn run_app<B: Backend>(
                     match key.code {
                         KeyCode::Char('q') => return Ok(()),
                         KeyCode::Char('s') => {
-                            app.new_pod_search_pop_up = true
+                            app.new_pod_search_pop_up = true;
+                            app.last_action = Some(Action::Switch);
                         }
                         KeyCode::Char('f') => {
-                            fetch_new_logs = true
+                            fetch_new_logs = true;
+                            app.last_action = Some(Action::FetchLogs);
                         },
                         KeyCode::Char('p') => {
                             delete_pod_next_tick = true;
+                            app.last_action = Some(Action::Purge);
                         },
                         KeyCode::Char('d') => {
                             text = kubectl::describe_pod(&app.target_pod).unwrap();
                             app.vertical_scroll = 0;
+                            app.last_action = Some(Action::ViewDesc);
                         },
                         KeyCode::Char('E') => {
                             terminal.clear().unwrap();
                             kubectl::edit_deployment(&app.target_pod).unwrap();
                             terminal.clear().unwrap();
+                            app.last_action = Some(Action::EditDeployment);
                         },
                         KeyCode::Char('w') => {
                             text = kubectl::get_pods(&app.target_pod).unwrap();
                             app.vertical_scroll = 0;
+                            app.last_action = Some(Action::World);
                         },
                         KeyCode::Char('W') => {
                             text = kubectl::get_all(&app.target_pod).unwrap();
                             app.vertical_scroll = 0;
+                            app.last_action = Some(Action::World);
                         },
                         KeyCode::Char('e') => {
                             terminal.clear().unwrap();
                             kubectl::exec_into_pod(&app.target_pod).unwrap();
                             terminal.clear().unwrap();
+                            app.last_action = Some(Action::Exec);
                         },
                         KeyCode::Char('b') => {
                             terminal.clear().unwrap();
                             kubectl::debug_pod(&app.target_pod).unwrap();
                             terminal.clear().unwrap();
+                            app.last_action = Some(Action::Debug);
                         },
                         KeyCode::Char('v') => {
                             terminal.clear().unwrap();
                             cli::open_in_vim(&app.target_pod).unwrap();
                             terminal.clear().unwrap();
+                            app.last_action = Some(Action::VimLogs);
                         },
                         KeyCode::Char('l') => {
                             fetch_prev_container_logs = true;
+                            app.last_action = Some(Action::LastLogs);
                         },
                         KeyCode::Char('j') | KeyCode::Down => {
                             if app.vertical_scroll + 1 < text.lines().count() {
@@ -225,8 +259,11 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
     let pod_name = &app.target_pod.name;
     let pod_deployment = &app.target_pod.deployment;
     let pod_ns = &app.target_pod.namespace;
+    let last_action = &app.last_action;
 
-    let details_content = "📜 [f]etch logs 📖 [l]ast logs 📝 [v]im logs";
+    let details_content = vec![render_action_text("📜 [f]etch logs ", Action::FetchLogs, last_action),
+                                              render_action_text("📖 [l]ast logs ", Action::LastLogs, last_action),
+                                              render_action_text("📝 [v]im logs", Action::VimLogs, last_action)];
 
     let chunks = Layout::vertical([
         Constraint::Min(1),
@@ -242,10 +279,17 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
         .block(
             Block::bordered().white()
             .title_top(Line::from(format!("{0} {pod_ns}/{pod_deployment}/{pod_name}", app.emoji)).left_aligned().bold().white())
-            .title_top(Line::from(format!("🔎 [d]esc 💻 [e]xec ✏️ [E]dit 🐞 de[b]ug 💀 [p]urge [q]uit ✖️")).right_aligned().white())
+            .title_top(Line::from(vec![
+                render_action_text("🔎 [d]esc ", Action::ViewDesc, last_action),
+                render_action_text("💻 [e]xec ", Action::Exec, last_action),
+                render_action_text("✏️ [E]dit ", Action::EditDeployment, last_action),
+                render_action_text("🐞 de[b]ug ", Action::Debug, last_action),
+                render_action_text("💀 [p]urge ", Action::Purge, last_action),
+                render_action_text("[q]uit ✖️", Action::Purge, last_action)]).right_aligned().white())
             .title_bottom(details_content).to_owned()
-            .title_bottom(Line::from(format!("🗺️ [W/w]orld [s]witch ⚙️").white()).right_aligned())
-            )
+            .title_bottom(Line::from(vec![
+                render_action_text("🗺️ [W/w]orld ", Action::World, last_action),
+                render_action_text("[s]witch ⚙️", Action::Switch, last_action)]).white().right_aligned()))
         .style(Style::default().fg(Color::Rgb(186, 186, 186)))
         .scroll((app.vertical_scroll as u16, app.horizontal_scroll as u16))
         .wrap(Wrap { trim: true });

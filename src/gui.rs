@@ -41,6 +41,7 @@ struct App {
     pub vertical_scroll: usize,
     pub horizontal_scroll: usize,
     pub show_pod_deleted_pop_up: bool,
+    pub show_switch_error_text: bool,
     pub new_pod_search_pop_up: bool,
     pub input_text: String,
     pub target_pod: FoundPod,
@@ -147,12 +148,23 @@ fn run_app<B: Backend>(
                             app.input_text.clear();
                         }
                         KeyCode::Enter => {
-                            app.new_pod_search_pop_up = false;
-                            app.target_pod = kubectl::find_matching_pod(app.input_text.as_str()).unwrap();
-                            fetch_new_logs = true;
-                            app.last_action = Some(InternalAction::FetchLogs);
-                            app.vertical_scroll = 0;
-                            app.input_text.clear();
+                            let matching_pod_result = kubectl::find_matching_pod(app.input_text.as_str());
+                            match matching_pod_result {
+                                Ok(matching_pod) => {
+                                    app.target_pod = matching_pod;
+                                    fetch_new_logs = true;
+                                    app.last_action = Some(InternalAction::FetchLogs);
+                                    app.vertical_scroll = 0;
+                                    app.input_text.clear();
+                                    app.show_switch_error_text = false;
+                                    app.new_pod_search_pop_up = false;
+                                },
+                                Err(_) => {
+                                    app.input_text.clear(); 
+                                    app.show_switch_error_text = true;
+                                }
+                            }
+                        
                         }
                         KeyCode::Backspace => {
                             app.input_text.pop();
@@ -306,7 +318,10 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
     }
 
     if app.new_pod_search_pop_up {
-        let block = Block::bordered().title("🔎 Enter new pod matcher (ESC to close)").on_black();
+        let mut block = Block::bordered().title("🔎 Enter new pod matcher (ESC to close)").on_black();
+        if app.show_switch_error_text {
+            block = Block::bordered().title("❌ Pod not found! Please search again.").on_red();
+        }
         let area = centered_rect(60, 20, f.size());
 
         let input = Paragraph::new(app.input_text.as_str().white())

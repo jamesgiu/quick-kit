@@ -382,32 +382,46 @@ pub fn describe_pod(pod: &FoundPod) -> Result<String> {
 mod tests {
     use color_eyre::eyre;
     use crate::kubectl::tests::eyre::eyre;
+    use color_eyre::eyre::{Result};
 
-    use crate::kubectl::{find_matching_deployment, KubeError, KubectlRunner};
+    use crate::kubectl::{find_matching_deployment, find_matching_pod, KubeError, KubectlRunner};
 
     const EXPECTED_ERROR: &str = "error";
 
+    static mut COUNTER: usize = 0;
+
+    #[derive(Default)]
+
     pub struct TestKubeCtlRunner<'a> {
-        expected_args: &'a [&'a str]
+        expected_args: Vec<&'a [&'a str]>,
+        pod_output: Option<&'a str>,
     }
 
     pub struct ErroringTestKubeCtlRunner<'a> {
-        expected_args: &'a [&'a str]
+        expected_args: &'a [&'a str],
     }
 
     impl KubectlRunner for TestKubeCtlRunner<'_> {
-        fn run_commands(&self, args: &[&str]) -> color_eyre::eyre::Result<String> {
-            // Ensure args are as expected.
-            assert_eq!(args, self.expected_args);
-            Ok(String::from(
-                "NAME               READY   UP-TO-DATE   AVAILABLE   AGE\n".to_owned() +
-                "ahoy-hello-world   2/2     2            2           266d"))
+        fn run_commands(&self, args: &[&str]) -> Result<String> {
+            unsafe { assert_eq!(args, self.expected_args[COUNTER]) };
+            unsafe { COUNTER += 1 };
+
+            if args.contains(&"pods") {
+                Ok(String::from(
+                    "namespace api-server-hello-123456\nnamespace2 something-else-abc",
+                ))
+            } else if args.contains(&"deployments") {
+                Ok(String::from(
+                    "NAME               READY   UP-TO-DATE   AVAILABLE   AGE\nahoy-api-server   2/2     2            2           100d",
+                ))
+            } else {
+                Ok(self.pod_output.unwrap_or("").to_string())
+            }
         }
     }
 
     impl KubectlRunner for ErroringTestKubeCtlRunner<'_> {
-        fn run_commands(&self, args: &[&str]) -> color_eyre::eyre::Result<String> {
-            // Ensure args are as expected.
+        fn run_commands(&self, args: &[&str]) -> Result<String> {
             assert_eq!(args, self.expected_args);
             Err(eyre!(EXPECTED_ERROR))
         }
@@ -415,27 +429,103 @@ mod tests {
 
     #[test]
     fn test_find_matching_deployment_success() {
-    let matcher = "hello";
-    let namespace = "namespace";
-    let matched_result = find_matching_deployment(&TestKubeCtlRunner { expected_args: &["get", "deployments", "-n", namespace]}, matcher, namespace).unwrap();
-    assert_eq!("ahoy-hello-world", matched_result);
-   }
+        unsafe { COUNTER = 0 };
+        let matcher = "api";
+        let namespace = "namespace";
+        let matched_result = find_matching_deployment(
+            &mut TestKubeCtlRunner {
+                expected_args: vec!(&["get", "deployments", "-n", namespace]),
+                pod_output: None,
+                ..Default::default()
+            },
+            matcher,
+            namespace,
+        )
+        .unwrap();
+        assert_eq!("ahoy-api-server", matched_result);
+    }
 
-   #[test]
-   fn test_find_matching_deployment_failure() {
-   let matcher = "goodbye";
-   let namespace = "namespace";
-   let matched_result = find_matching_deployment(&TestKubeCtlRunner { expected_args: &["get", "deployments", "-n", namespace]}, matcher, namespace);
-   assert!(matched_result.is_err());
-   assert_eq!(KubeError::ResourceNotFoundError(matcher.to_string(), namespace.to_string()).to_string(), matched_result.err().unwrap().to_string())
-  }
+    #[test]
+    fn test_find_matching_deployment_failure() {
+        unsafe { COUNTER = 0 };
+        let matcher = "goodbye";
+        let namespace = "namespace";
+        let matched_result = find_matching_deployment(
+            &mut TestKubeCtlRunner {
+                expected_args: vec!(&["get", "deployments", "-n", namespace]),
+                pod_output: None,
+                ..Default::default()
+            },
+            matcher,
+            namespace,
+        );
+        assert!(matched_result.is_err());
+        assert_eq!(
+            KubeError::ResourceNotFoundError(matcher.to_string(), namespace.to_string()).to_string(),
+            matched_result.err().unwrap().to_string()
+        )
+    }
 
-  #[test]
-  fn test_find_matching_deployment_err() {
-  let matcher = "goodbye";
-  let namespace = "namespace";
-  let matched_result = find_matching_deployment(&ErroringTestKubeCtlRunner { expected_args: &["get", "deployments", "-n", namespace]}, matcher, namespace);
-  assert!(matched_result.is_err());
-  assert_eq!("error", matched_result.err().unwrap().to_string())
- }
+    #[test]
+    fn test_find_matching_deployment_err() {
+        unsafe { COUNTER = 0 };
+        let matcher = "goodbye";
+        let namespace = "namespace";
+        let matched_result = find_matching_deployment(
+            &mut ErroringTestKubeCtlRunner {
+                expected_args: &["get", "deployments", "-n", namespace],
+            },
+            matcher,
+            namespace,
+        );
+        assert!(matched_result.is_err());
+        assert_eq!(EXPECTED_ERROR, matched_result.err().unwrap().to_string())
+    }
+
+    #[test]
+    fn test_find_matching_pod_success() {
+        unsafe { COUNTER = 0 };
+        let matcher = "api-server";
+        let matched_result = find_matching_pod(&mut TestKubeCtlRunner {
+            expected_args: vec!(&["get", "pods", "--all-namespaces"], &["get", "deployments", "-n", "namespace"]),
+            pod_output: None,
+            ..Default::default()
+        }, matcher)
+        .unwrap();
+
+        assert_eq!(matched_result.name, "api-server-hello-123456");
+        assert_eq!(matched_result.namespace, "namespace");
+        assert_eq!(matched_result.deployment, "ahoy-api-server");
+    }
+
+    #[test]
+    fn test_find_matching_pod_not_found() {
+        unsafe { COUNTER = 0 };
+        let matcher = "nonexistent";
+
+        let result = find_matching_pod(&mut TestKubeCtlRunner {
+            expected_args: vec!(&["get", "pods", "--all-namespaces"], &["get", "deployments", "-n", "namespace"]),
+            pod_output: Some("namespace pod-abc\nnamespace2 something-else"),
+            ..Default::default()
+        }, matcher);
+
+        assert!(result.is_err());
+        assert_eq!(
+            KubeError::ResourceNotFoundError(matcher.to_string(), "all".to_string()).to_string(),
+            result.err().unwrap().to_string()
+        );
+    }
+
+    #[test]
+    fn test_find_matching_pod_kubectl_error() {
+        unsafe { COUNTER = 0 };
+        let matcher = "error";
+
+        let result = find_matching_pod(&mut ErroringTestKubeCtlRunner {
+            expected_args: &["get", "pods", "--all-namespaces"],
+        }, matcher);
+
+        assert!(result.is_err());
+        assert_eq!(EXPECTED_ERROR, result.err().unwrap().to_string());
+    }
 }

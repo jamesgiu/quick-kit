@@ -5,6 +5,8 @@ mod gui;
 use color_eyre::{config::HookBuilder, eyre::Result};
 use clap::{command, Parser};
 
+use crate::kubectl::KubectlRunnerAgent;
+
 /// Program to execute kubectl commands on resources, using regex matching.
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -22,7 +24,7 @@ fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    let pod = kubectl::find_matching_pod(&args.matcher)?;
+    let pod = kubectl::find_matching_pod(&KubectlRunnerAgent{}, &args.matcher)?;
 
     Ok(gui::gui(pod)?)
 }

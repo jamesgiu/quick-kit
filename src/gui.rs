@@ -13,7 +13,7 @@ use ratatui::style::{Color, Style};
 use color_eyre::eyre::{Result};
 use ratatui::widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 
-use crate::kubectl::{self, FoundPod};
+use crate::kubectl::{self, FoundPod, KubectlRunnerAgent};
 use crate::cli::{self};
 
 pub fn render_action_text<'a>(text: &'a str, action: InternalAction, last_action: &Option<InternalAction>) -> Span<'a> {
@@ -97,6 +97,7 @@ fn run_app<B: Backend>(
     let mut fetch_prev_container_logs = false;
     let mut delete_pod_next_tick = false;
     let mut reset_scroll = true;
+    let runner = KubectlRunnerAgent;
     let mut text = kubectl::get_pod_logs(&app.target_pod, true, false).unwrap();
     let icons = ["🐝", "🦀", "🐋", "🐧", "🦕", "🦐", "🐬", "🦞", "🤖", "🐤", "🪿"]; 
     // Create a random number generator
@@ -150,7 +151,7 @@ fn run_app<B: Backend>(
                             app.input_text.clear();
                         }
                         KeyCode::Enter => {
-                            let matching_pod_result = kubectl::find_matching_pod(app.input_text.as_str());
+                            let matching_pod_result = kubectl::find_matching_pod(&runner, app.input_text.as_str());
                             match matching_pod_result {
                                 Ok(matching_pod) => {
                                     app.target_pod = matching_pod;

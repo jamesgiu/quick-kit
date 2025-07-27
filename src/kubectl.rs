@@ -4,29 +4,60 @@ use color_eyre::eyre::{Context, Result};
 use regex::Regex;
 use thiserror::Error;
 
+// TODO
+// Refactor to use KubectlRunner
+// Mock KubectlRunner for tests
+// More RustDoc
+
+pub trait KubectlRunner {
+    fn run_commands(&self, args: &[&str]) -> Result<String>;
+}
+
+pub struct KubectlRunnerAgent;
+
+impl KubectlRunner for KubectlRunnerAgent {
+    fn run_commands(&self, args: &[&str]) -> Result<String> {
+        let output = String::from_utf8(Command::new("kubectl")
+        .args(args)
+        .output()
+        .wrap_err("Could not run commands")?.stdout)?;
+
+        Ok(output)
+    }
+} 
+
+/// Custom error type for Kubernetes resource matching operations.
 #[derive(Error, Debug)]
 pub enum KubeError {
+    /// Raised when a resource could not be found for a given matcher in a specified namespace.
     #[error("Resource not found with provided matcher: {0} in namespace {1}")]
     ResourceNotFoundError(String, String),
 }
 
+/// Represents a Kubernetes pod and its associated metadata.
 #[derive(Default)]
 pub struct FoundPod {
+    /// Name of the pod.
     pub name: String,
+    /// Namespace where the pod is located.
     pub namespace: String,
+    /// Name of the deployment managing the pod.
     pub deployment: String,
 }
 
-pub fn find_matching_deployment(matcher: &str, namespace: &str) -> Result<String> {
-    let deployment_output = Command::new("kubectl")
-        .arg("get")
-        .arg("deployments")
-        .arg("-n")
-        .arg(&namespace)
-        .output()
-        .wrap_err("Could not get deployments")?;
-
-    let deployments = String::from_utf8(deployment_output.stdout)?;
+/// Attempts to find a matching Kubernetes deployment based on a matcher string and namespace.
+///
+/// This function uses `kubectl get deployments` and regex matching to find a relevant deployment.
+///
+/// # Arguments
+/// * `matcher` - A string to match the deployment name.
+/// 
+/// * `namespace` - The Kubernetes namespace to search in.
+///
+/// # Errors
+/// Returns an error if `kubectl` fails, the output is invalid UTF-8, or no deployment is found.
+pub fn find_matching_deployment(runner: &dyn KubectlRunner, matcher: &str, namespace: &str) -> Result<String> {
+    let deployments = runner.run_commands(&["get", "deployments", "-n", namespace])?;
 
     let sanitised_matcher = Regex::new(r"\-+[0-9]+")?
         .replace_all(matcher, "")
@@ -47,16 +78,19 @@ pub fn find_matching_deployment(matcher: &str, namespace: &str) -> Result<String
     }
 }
 
-pub fn find_matching_pod(matcher: &str) -> Result<FoundPod> {
-    let output = Command::new("kubectl")
-        .arg("get")
-        .arg("pods")
-        .arg("--all-namespaces")
-        .output()
-        .wrap_err("Could not execute kubectl get pods")?;
-
-    let pods = String::from_utf8(output.stdout)?;
-
+/// Finds a pod by using a matcher string across all namespaces.
+///
+/// # Arguments
+/// * `matcher` - A string used to locate a matching pod.
+///
+/// # Returns
+/// A `FoundPod` struct containing the pod name, namespace, and owning deployment.
+///
+/// # Errors
+/// Returns an error if the pod or its deployment cannot be found.
+pub fn find_matching_pod(runner: &dyn KubectlRunner, matcher: &str) -> Result<FoundPod> {
+    let pods = runner.run_commands(&["get", "pods", "--all-namespaces"])?;
+    
     let re = Regex::new(&format!(
         r"(\b.*\b)( .*{matcher}.*-[0-9A-Za-z-]+)"
     ))?;
@@ -73,7 +107,7 @@ pub fn find_matching_pod(matcher: &str) -> Result<FoundPod> {
                 .ok_or_else(|| color_eyre::eyre::eyre!("No namespace match found"))?
                 .as_str()
                 .to_string();
-            let deployment = find_matching_deployment(&matcher, &ns)?;
+            let deployment = find_matching_deployment(runner, &matcher, &ns)?;
 
             Ok(FoundPod {
                 name: pod,
@@ -89,6 +123,13 @@ pub fn find_matching_pod(matcher: &str) -> Result<FoundPod> {
     }
 }
 
+/// Spawns a debug container into the given pod using the same image and container name.
+///
+/// # Arguments
+/// * `pod` - A reference to the `FoundPod` struct representing the target pod.
+///
+/// # Errors
+/// Returns an error if `kubectl debug` or the underlying metadata fetch commands fail.
 pub fn debug_pod(pod: &FoundPod) -> Result<()> {
     let image_name = String::from_utf8(
         Command::new("kubectl")
@@ -101,8 +142,7 @@ pub fn debug_pod(pod: &FoundPod) -> Result<()> {
             .output()
             .wrap_err("Failed to get image name")?
             .stdout,
-    )
-    .wrap_err("Invalid UTF-8 in image name")?
+    )?
     .replace("[ ", "");
 
     let container_name = String::from_utf8(
@@ -116,8 +156,7 @@ pub fn debug_pod(pod: &FoundPod) -> Result<()> {
             .output()
             .wrap_err("Failed to get container name")?
             .stdout,
-    )
-    .wrap_err("Invalid UTF-8 in container name")?
+    )?
     .replace("[ ", "");
 
     Command::new("kubectl")
@@ -138,6 +177,13 @@ pub fn debug_pod(pod: &FoundPod) -> Result<()> {
     Ok(())
 }
 
+/// Starts an interactive shell session inside a running pod container.
+///
+/// # Arguments
+/// * `pod` - A reference to the target `FoundPod`.
+///
+/// # Errors
+/// Returns an error if the `kubectl exec` command fails.
 pub fn exec_into_pod(pod: &FoundPod) -> Result<()> {
     Command::new("kubectl")
         .arg("exec")
@@ -156,6 +202,16 @@ pub fn exec_into_pod(pod: &FoundPod) -> Result<()> {
     Ok(())
 }
 
+/// Deletes the given pod without waiting for completion.
+///
+/// # Arguments
+/// * `pod` - A reference to the pod to delete.
+///
+/// # Returns
+/// A string output of the `kubectl delete` command.
+///
+/// # Errors
+/// Returns an error if the command fails or the output can't be decoded.
 pub fn delete_pod(pod: &FoundPod) -> Result<String> {
     let output = Command::new("kubectl")
         .arg("delete")
@@ -171,6 +227,16 @@ pub fn delete_pod(pod: &FoundPod) -> Result<String> {
     Ok(delete)
 }
 
+/// Retrieves a reversed and formatted list of pods sorted by start time in the given namespace.
+///
+/// # Arguments
+/// * `pod` - A reference to the namespace's pod (only namespace field is used).
+///
+/// # Returns
+/// A formatted string of pod statuses.
+///
+/// # Errors
+/// Returns an error if the `kubectl` or `tac` commands fail or output can't be parsed.
 pub fn get_pods(pod: &FoundPod) -> Result<String> {
     let output = Command::new("kubectl")
         .arg("get")
@@ -190,8 +256,7 @@ pub fn get_pods(pod: &FoundPod) -> Result<String> {
         .output()
         .wrap_err("Failed to run tac on pods output")?;
 
-    let pods = String::from_utf8(tac.stdout)
-        .wrap_err("Invalid UTF-8 in pods output")?
+    let pods = String::from_utf8(tac.stdout)?
         .replace("Running", "🏃 Running")
         .replace("Error", "❌ Error")
         .replace("Completed", "✅ Completed")
@@ -203,6 +268,16 @@ pub fn get_pods(pod: &FoundPod) -> Result<String> {
     Ok(pods)
 }
 
+/// Lists all resources in the pod's namespace (no headers).
+///
+/// # Arguments
+/// * `pod` - A reference to the pod (only namespace is used).
+///
+/// # Returns
+/// Output of `kubectl get all`.
+///
+/// # Errors
+/// Returns an error if the command fails or output is invalid.
 pub fn get_all(pod: &FoundPod) -> Result<String> {
     let output = Command::new("kubectl")
         .arg("get")
@@ -217,6 +292,13 @@ pub fn get_all(pod: &FoundPod) -> Result<String> {
     Ok(all)
 }
 
+/// Opens the deployment of the given pod in an editor.
+///
+/// # Arguments
+/// * `pod` - The pod whose deployment should be edited.
+///
+/// # Errors
+/// Returns an error if `kubectl edit` fails to spawn or complete.
 pub fn edit_deployment(pod: &FoundPod) -> Result<()> {
     Command::new("kubectl")
         .arg("edit")
@@ -232,6 +314,26 @@ pub fn edit_deployment(pod: &FoundPod) -> Result<()> {
     Ok(())
 }
 
+/// Fetches logs from a given pod, optionally from the last container or limiting output.
+///
+/// # Arguments
+/// * `pod` - The pod to retrieve logs from.
+/// * `lite` - If `true`, limits to last 500 lines.
+/// * `last_container` - If `true`, fetches logs from the previous container instance.
+///
+/// # Returns
+/// The logs as a string.
+///
+/// # Errors
+/// Returns an error if the command fails or output is not UTF-8.
+///
+/// # Example
+/// ```no_run
+/// let pod = find_matching_pod("api")?;
+/// let logs = get_pod_logs(&pod, true, false)?;
+/// println!("{}", logs);
+/// # Ok::<(), color_eyre::eyre::Report>(())
+/// ```
 pub fn get_pod_logs(pod: &FoundPod, lite: bool, last_container: bool) -> Result<String> {
     let output = Command::new("kubectl")
         .arg("logs")
@@ -251,6 +353,16 @@ pub fn get_pod_logs(pod: &FoundPod, lite: bool, last_container: bool) -> Result<
     Ok(logs)
 }
 
+/// Describes the given pod using `kubectl describe`.
+///
+/// # Arguments
+/// * `pod` - The pod to describe.
+///
+/// # Returns
+/// The full description string.
+///
+/// # Errors
+/// Returns an error if the command fails or the output can't be decoded.
 pub fn describe_pod(pod: &FoundPod) -> Result<String> {
     let output = Command::new("kubectl")
         .arg("describe")
@@ -263,4 +375,30 @@ pub fn describe_pod(pod: &FoundPod) -> Result<String> {
 
     let describe = String::from_utf8(output.stdout)?;
     Ok(describe)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::kubectl::{find_matching_deployment, KubectlRunner};
+
+    pub struct TestKubeCtlRunner<'a> {
+        expected_args: &'a [&'a str]
+    }
+
+    #[test]
+    fn test_find_matching_deployment_succeess() {
+    let matcher = "hello";
+    let namespace = "namespace";
+    impl KubectlRunner for TestKubeCtlRunner<'_> {
+            fn run_commands(&self, args: &[&str]) -> color_eyre::eyre::Result<String> {
+                // Ensure args are as expected.
+                assert_eq!(args, self.expected_args);
+                Ok(String::from(
+                    "NAME               READY   UP-TO-DATE   AVAILABLE   AGE\n".to_owned() +
+                    "ahoy-hello-world   2/2     2            2           266d"))
+            }
+        }
+    let matched_result = find_matching_deployment(&TestKubeCtlRunner { expected_args: &["get", "deployments", "-n", namespace]}, matcher, namespace).unwrap();
+    assert_eq!("ahoy-hello-world", matched_result);
+   }
 }

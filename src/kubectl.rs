@@ -8,6 +8,7 @@ use thiserror::Error;
 // Refactor to use KubectlRunner
 // Mock KubectlRunner for tests
 // More RustDoc
+// Write tests
 
 pub trait KubectlRunner {
     fn run_commands(&self, args: &[&str]) -> Result<String>;
@@ -379,26 +380,62 @@ pub fn describe_pod(pod: &FoundPod) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use crate::kubectl::{find_matching_deployment, KubectlRunner};
+    use color_eyre::eyre;
+    use crate::kubectl::tests::eyre::eyre;
+
+    use crate::kubectl::{find_matching_deployment, KubeError, KubectlRunner};
+
+    const EXPECTED_ERROR: &str = "error";
 
     pub struct TestKubeCtlRunner<'a> {
         expected_args: &'a [&'a str]
     }
 
+    pub struct ErroringTestKubeCtlRunner<'a> {
+        expected_args: &'a [&'a str]
+    }
+
+    impl KubectlRunner for TestKubeCtlRunner<'_> {
+        fn run_commands(&self, args: &[&str]) -> color_eyre::eyre::Result<String> {
+            // Ensure args are as expected.
+            assert_eq!(args, self.expected_args);
+            Ok(String::from(
+                "NAME               READY   UP-TO-DATE   AVAILABLE   AGE\n".to_owned() +
+                "ahoy-hello-world   2/2     2            2           266d"))
+        }
+    }
+
+    impl KubectlRunner for ErroringTestKubeCtlRunner<'_> {
+        fn run_commands(&self, args: &[&str]) -> color_eyre::eyre::Result<String> {
+            // Ensure args are as expected.
+            assert_eq!(args, self.expected_args);
+            Err(eyre!(EXPECTED_ERROR))
+        }
+    }
+
     #[test]
-    fn test_find_matching_deployment_succeess() {
+    fn test_find_matching_deployment_success() {
     let matcher = "hello";
     let namespace = "namespace";
-    impl KubectlRunner for TestKubeCtlRunner<'_> {
-            fn run_commands(&self, args: &[&str]) -> color_eyre::eyre::Result<String> {
-                // Ensure args are as expected.
-                assert_eq!(args, self.expected_args);
-                Ok(String::from(
-                    "NAME               READY   UP-TO-DATE   AVAILABLE   AGE\n".to_owned() +
-                    "ahoy-hello-world   2/2     2            2           266d"))
-            }
-        }
     let matched_result = find_matching_deployment(&TestKubeCtlRunner { expected_args: &["get", "deployments", "-n", namespace]}, matcher, namespace).unwrap();
     assert_eq!("ahoy-hello-world", matched_result);
    }
+
+   #[test]
+   fn test_find_matching_deployment_failure() {
+   let matcher = "goodbye";
+   let namespace = "namespace";
+   let matched_result = find_matching_deployment(&TestKubeCtlRunner { expected_args: &["get", "deployments", "-n", namespace]}, matcher, namespace);
+   assert!(matched_result.is_err());
+   assert_eq!(KubeError::ResourceNotFoundError(matcher.to_string(), namespace.to_string()).to_string(), matched_result.err().unwrap().to_string())
+  }
+
+  #[test]
+  fn test_find_matching_deployment_err() {
+  let matcher = "goodbye";
+  let namespace = "namespace";
+  let matched_result = find_matching_deployment(&ErroringTestKubeCtlRunner { expected_args: &["get", "deployments", "-n", namespace]}, matcher, namespace);
+  assert!(matched_result.is_err());
+  assert_eq!("error", matched_result.err().unwrap().to_string())
+ }
 }

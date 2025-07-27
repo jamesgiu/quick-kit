@@ -17,9 +17,11 @@ use crate::kubectl::{self, FoundPod};
 use crate::cli::{self};
 
 pub fn render_action_text<'a>(text: &'a str, action: InternalAction, last_action: &Option<InternalAction>) -> Span<'a> {
-    if last_action.is_some() && action == last_action.unwrap() {
-        return format!("{text}").blue();
-    } 
+    if let Some(last_action) = last_action {
+        if *last_action == action {
+            return format!("{text}").blue();
+        }
+    }
     
     format!("{text}").white()
 }
@@ -164,7 +166,6 @@ fn run_app<B: Backend>(
                                     app.show_switch_error_text = true;
                                 }
                             }
-                        
                         }
                         KeyCode::Backspace => {
                             app.input_text.pop();

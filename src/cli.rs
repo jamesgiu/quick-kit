@@ -1,8 +1,8 @@
 use std::{fs, process::Command};
-
+use color_eyre::{Result};
 use crate::kubectl::{self, FoundPod};
 
-pub fn open_in_vim(pod: &FoundPod) -> anyhow::Result<()> {
+pub fn open_in_vim(pod: &FoundPod) -> Result<()> {
     let logs = kubectl::get_pod_logs(pod, false, false).unwrap();
     let name = &pod.name;
     let fname = format!("/tmp/klog_{name}");

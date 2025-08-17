@@ -4,12 +4,6 @@ use color_eyre::eyre::{Context, Result};
 use regex::Regex;
 use thiserror::Error;
 
-// TODO
-// Refactor to use KubectlRunner
-// Mock KubectlRunner for tests
-// More RustDoc
-// Write tests
-
 pub trait KubectlRunner {
     fn run_commands(&self, args: &[&str]) -> Result<String>;
 }
@@ -33,6 +27,8 @@ pub enum KubeError {
     /// Raised when a resource could not be found for a given matcher in a specified namespace.
     #[error("Resource not found with provided matcher: {0} in namespace {1}")]
     ResourceNotFoundError(String, String),
+    #[error("Execution not able to be performed on {0} in namespace {1}")]
+    ResourceExecutionIssue(String, String)
 }
 
 /// Represents a Kubernetes pod and its associated metadata.
@@ -335,23 +331,23 @@ pub fn edit_deployment(pod: &FoundPod) -> Result<()> {
 /// println!("{}", logs);
 /// # Ok::<(), color_eyre::eyre::Report>(())
 /// ```
-pub fn get_pod_logs(pod: &FoundPod, lite: bool, last_container: bool) -> Result<String> {
-    let output = Command::new("kubectl")
-        .arg("logs")
-        .arg(&pod.name)
-        .arg("-n")
-        .arg(&pod.namespace)
-        .arg(if lite { "--tail=500" } else { "--tail=-1" })
-        .arg(if last_container {
+pub fn get_pod_logs(runner: &dyn KubectlRunner, pod: &FoundPod, lite: bool, last_container: bool) -> Result<String> {
+    let output = runner.run_commands(
+        &["logs", &pod.name, "-n", &pod.namespace, if lite { "--tail=500" } else { "--tail=-1" }, if last_container {
             "--previous=true"
         } else {
             "--previous=false"
-        })
-        .output()
-        .wrap_err("Failed to get pod logs")?;
+        }]);
 
-    let logs = String::from_utf8(output.stdout)?;
-    Ok(logs)
+    match output {
+        Ok(logs) => {
+            Ok(logs)
+        },
+        Err(err) => {
+            Err(err.wrap_err(KubeError::ResourceExecutionIssue(pod.name.to_string(), pod.namespace.to_string())).into())
+        }
+    }
+
 }
 
 /// Describes the given pod using `kubectl describe`.
@@ -381,7 +377,7 @@ pub fn describe_pod(pod: &FoundPod) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use color_eyre::eyre;
-    use crate::kubectl::tests::eyre::eyre;
+    use crate::kubectl::{get_pod_logs, tests::eyre::eyre, FoundPod};
     use color_eyre::eyre::{Result};
 
     use crate::kubectl::{find_matching_deployment, find_matching_pod, KubeError, KubectlRunner};
@@ -527,5 +523,47 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(EXPECTED_ERROR, result.err().unwrap().to_string());
+    }
+
+    #[test]
+    fn test_get_pod_logs_success() {
+        unsafe { COUNTER = 0 };
+        let pod = FoundPod {
+            name: "eh".to_string(),
+            namespace: "namespace".to_string(),
+            deployment: "eh".to_string(),
+        };
+
+        let binding = ["logs", &pod.name, "-n", &pod.namespace, "--tail=-1", "--previous=false"];
+        let test_kube_ctl_runner = TestKubeCtlRunner {
+            expected_args: vec!(&binding),
+            pod_output: Some("these are some logs")
+        };
+
+        let result = get_pod_logs(&test_kube_ctl_runner, &pod, false, false);
+
+        assert!(result.is_ok());
+        assert_eq!("these are some logs", result.unwrap().to_string())
+    }
+
+
+    #[test]
+    fn test_get_pod_logs_error() {
+        unsafe { COUNTER = 0 };
+        let pod = FoundPod {
+            name: "eh".to_string(),
+            namespace: "namespace".to_string(),
+            deployment: "eh".to_string(),
+        };
+
+        let binding = &["logs", &pod.name, "-n", &pod.namespace, "--tail=-1", "--previous=false"];
+        let test_kube_ctl_runner = ErroringTestKubeCtlRunner {
+            expected_args: binding,
+        };
+
+        let result = get_pod_logs(&test_kube_ctl_runner, &pod, false, false);
+
+        assert!(result.is_err());
+        assert_eq!(KubeError::ResourceExecutionIssue(pod.name, pod.namespace).to_string(), result.err().unwrap().to_string())
     }
 }

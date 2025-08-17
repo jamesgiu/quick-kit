@@ -91,14 +91,14 @@ fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app: App,
     tick_rate: Duration
-) -> io::Result<()> {
+) -> Result<String> {
     let mut last_tick = Instant::now();
     let mut fetch_new_logs = false;
     let mut fetch_prev_container_logs = false;
     let mut delete_pod_next_tick = false;
     let mut reset_scroll = true;
     let runner = KubectlRunnerAgent;
-    let mut text = kubectl::get_pod_logs(&app.target_pod, true, false).unwrap();
+    let mut text = kubectl::get_pod_logs(&runner, &app.target_pod, true, false)?;
     let icons = ["🐝", "🦀", "🐋", "🐧", "🦕", "🦐", "🐬", "🦞", "🤖", "🐤", "🪿"]; 
     // Create a random number generator
     let mut rng = rand::rng();
@@ -117,13 +117,13 @@ fn run_app<B: Backend>(
         }
 
         if fetch_prev_container_logs {
-            text = kubectl::get_pod_logs(&app.target_pod, true, true).unwrap();
+            text = kubectl::get_pod_logs(&runner, &app.target_pod, true, true)?;
             fetch_prev_container_logs = false;
             reset_scroll = true;
         }
 
         if fetch_new_logs {
-            text = kubectl::get_pod_logs(&app.target_pod, true, false).unwrap();
+            text = kubectl::get_pod_logs(&runner, &app.target_pod, true, false)?;
             fetch_new_logs = false;
             reset_scroll = true;
         }
@@ -175,7 +175,7 @@ fn run_app<B: Backend>(
                     }
                 } else {
                     match key.code {
-                        KeyCode::Char('q') => return Ok(()),
+                        KeyCode::Char('q') => return Ok("quit".to_string()),
                         KeyCode::Char('s') => {
                             app.new_pod_search_pop_up = true;
                             app.last_action = Some(InternalAction::Switch);
@@ -220,7 +220,7 @@ fn run_app<B: Backend>(
                         },
                         KeyCode::Char('v') => {
                             terminal.clear().unwrap();
-                            cli::open_in_vim(&app.target_pod).unwrap();
+                            cli::open_in_vim(&runner, &app.target_pod).unwrap();
                             terminal.clear().unwrap();
                         },
                         KeyCode::Char('l') => {

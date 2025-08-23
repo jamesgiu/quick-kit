@@ -131,7 +131,7 @@ fn run_app<B: Backend>(
         if delete_pod_next_tick {
             text = text + "\nDeleted :(. Press 'q' to quit.";
             app.show_pod_deleted_pop_up = true;
-            kubectl::delete_pod(&app.target_pod).unwrap();
+            kubectl::delete_pod(&runner, &app.target_pod).unwrap();
             delete_pod_next_tick = false;
             reset_scroll = true;
         }
@@ -189,33 +189,33 @@ fn run_app<B: Backend>(
                             app.last_action = Some(InternalAction::Purge);
                         },
                         KeyCode::Char('d') => {
-                            text = kubectl::describe_pod(&app.target_pod).unwrap();
+                            text = kubectl::describe_pod(&runner, &app.target_pod).unwrap();
                             app.vertical_scroll = 0;
                             app.last_action = Some(InternalAction::ViewDesc);
                         },
                         KeyCode::Char('E') => {
                             terminal.clear().unwrap();
-                            kubectl::edit_deployment(&app.target_pod).unwrap();
+                            kubectl::edit_deployment(&runner, &app.target_pod).unwrap();
                             terminal.clear().unwrap();
                         },
                         KeyCode::Char('w') => {
-                            text = kubectl::get_pods(&app.target_pod).unwrap();
+                            text = kubectl::get_pods(&runner, &app.target_pod).unwrap();
                             app.vertical_scroll = 0;
                             app.last_action = Some(InternalAction::World);
                         },
                         KeyCode::Char('W') => {
-                            text = kubectl::get_all(&app.target_pod).unwrap();
+                            text = kubectl::get_all(&runner, &app.target_pod).unwrap();
                             app.vertical_scroll = 0;
                             app.last_action = Some(InternalAction::World);
                         },
                         KeyCode::Char('e') => {
                             terminal.clear().unwrap();
-                            kubectl::exec_into_pod(&app.target_pod).unwrap();
+                            kubectl::exec_into_pod(&runner, &app.target_pod).unwrap();
                             terminal.clear().unwrap();
                         },
                         KeyCode::Char('b') => {
                             terminal.clear().unwrap();
-                            kubectl::debug_pod(&app.target_pod).unwrap();
+                            kubectl::debug_pod(&runner, &app.target_pod).unwrap();
                             terminal.clear().unwrap();
                         },
                         KeyCode::Char('v') => {

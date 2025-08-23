@@ -1,4 +1,4 @@
-use std::process::{Command, Stdio};
+use std::{io::Write, process::{Command, Stdio}};
 
 use color_eyre::eyre::{Context, Result};
 use regex::Regex;
@@ -6,6 +6,7 @@ use thiserror::Error;
 
 pub trait KubectlRunner {
     fn run_commands(&self, args: &[&str]) -> Result<String>;
+    fn spawn_shell(&self, args: &[&str]) -> Result<()>;
 }
 
 pub struct KubectlRunnerAgent;
@@ -18,6 +19,17 @@ impl KubectlRunner for KubectlRunnerAgent {
         .wrap_err("Could not run commands")?.stdout)?;
 
         Ok(output)
+    }
+
+    fn spawn_shell(&self, args: &[&str]) -> Result<()> {
+       Command::new("kubectl")
+        .args(args)
+        .spawn()
+        .wrap_err("Could not run commands")?
+        .wait()
+        .wrap_err("could not spawn process")?;
+
+        Ok(())
     }
 } 
 
@@ -127,51 +139,23 @@ pub fn find_matching_pod(runner: &dyn KubectlRunner, matcher: &str) -> Result<Fo
 ///
 /// # Errors
 /// Returns an error if `kubectl debug` or the underlying metadata fetch commands fail.
-pub fn debug_pod(pod: &FoundPod) -> Result<()> {
-    let image_name = String::from_utf8(
-        Command::new("kubectl")
-            .arg("get")
-            .arg("pod")
-            .arg(&pod.name)
-            .arg("-n")
-            .arg(&pod.namespace)
-            .arg("-o=jsonpath={.spec.containers[0].image}")
-            .output()
-            .wrap_err("Failed to get image name")?
-            .stdout,
-    )?
-    .replace("[ ", "");
+pub fn debug_pod(runner: &dyn KubectlRunner, pod: &FoundPod) -> Result<()> {
+    let image_name = runner.run_commands(&[
+        "get", "pod", &pod.name, "-n", &pod.namespace,
+        "-o=jsonpath={.spec.containers[0].image}",
+    ])?;
 
-    let container_name = String::from_utf8(
-        Command::new("kubectl")
-            .arg("get")
-            .arg("pod")
-            .arg(&pod.name)
-            .arg("-n")
-            .arg(&pod.namespace)
-            .arg("-o=jsonpath={.spec.containers[0].name}")
-            .output()
-            .wrap_err("Failed to get container name")?
-            .stdout,
-    )?
-    .replace("[ ", "");
+    let container_name = runner.run_commands(&[
+        "get", "pod", &pod.name, "-n", &pod.namespace,
+        "-o=jsonpath={.spec.containers[0].name}",
+    ])?;
 
-    Command::new("kubectl")
-        .arg("debug")
-        .arg(&pod.name)
-        .arg("-n")
-        .arg(&pod.namespace)
-        .arg("-it")
-        .arg(format!("--image={}", &image_name))
-        .arg(format!("--target={}", &container_name))
-        .arg("--")
-        .arg("sh")
-        .spawn()
-        .wrap_err("Failed to spawn kubectl debug")?
-        .wait()
-        .wrap_err("Failed to wait for kubectl debug")?;
-
-    Ok(())
+    runner.spawn_shell(&[
+        "debug", &pod.name, "-n", &pod.namespace, "-it",
+        &format!("--image={}", image_name),
+        &format!("--target={}", container_name),
+        "--", "sh",
+    ])
 }
 
 /// Starts an interactive shell session inside a running pod container.
@@ -181,22 +165,10 @@ pub fn debug_pod(pod: &FoundPod) -> Result<()> {
 ///
 /// # Errors
 /// Returns an error if the `kubectl exec` command fails.
-pub fn exec_into_pod(pod: &FoundPod) -> Result<()> {
-    Command::new("kubectl")
-        .arg("exec")
-        .arg("--stdin")
-        .arg("--tty")
-        .arg(&pod.name)
-        .arg("-n")
-        .arg(&pod.namespace)
-        .arg("--")
-        .arg("/bin/sh")
-        .spawn()
-        .wrap_err("Failed to exec into pod")?
-        .wait()
-        .wrap_err("Failed to wait for exec command")?;
-
-    Ok(())
+pub fn exec_into_pod(runner: &dyn KubectlRunner, pod: &FoundPod) -> Result<()> {
+    runner.spawn_shell(&[
+        "exec", "--stdin", "--tty", &pod.name, "-n", &pod.namespace, "--", "/bin/sh",
+    ])
 }
 
 /// Deletes the given pod without waiting for completion.
@@ -209,19 +181,10 @@ pub fn exec_into_pod(pod: &FoundPod) -> Result<()> {
 ///
 /// # Errors
 /// Returns an error if the command fails or the output can't be decoded.
-pub fn delete_pod(pod: &FoundPod) -> Result<String> {
-    let output = Command::new("kubectl")
-        .arg("delete")
-        .arg("pod")
-        .arg(&pod.name)
-        .arg("-n")
-        .arg(&pod.namespace)
-        .arg("--wait=false")
-        .output()
-        .wrap_err("Failed to delete pod")?;
-
-    let delete = String::from_utf8(output.stdout)?;
-    Ok(delete)
+pub fn delete_pod(runner: &dyn KubectlRunner, pod: &FoundPod) -> Result<String> {
+    runner.run_commands(&[
+        "delete", "pod", &pod.name, "-n", &pod.namespace, "--wait=false",
+    ])
 }
 
 /// Retrieves a reversed and formatted list of pods sorted by start time in the given namespace.
@@ -234,26 +197,25 @@ pub fn delete_pod(pod: &FoundPod) -> Result<String> {
 ///
 /// # Errors
 /// Returns an error if the `kubectl` or `tac` commands fail or output can't be parsed.
-pub fn get_pods(pod: &FoundPod) -> Result<String> {
-    let output = Command::new("kubectl")
-        .arg("get")
-        .arg("pods")
-        .arg("-n")
-        .arg(&pod.namespace)
-        .arg("--sort-by=.status.startTime")
-        .arg("--no-headers")
+pub fn get_pods(runner: &dyn KubectlRunner, pod: &FoundPod) -> Result<String> {
+    let pods_output = runner.run_commands(&[
+        "get", "pods", "-n", &pod.namespace,
+        "--sort-by=.status.startTime", "--no-headers",
+    ])?;
+
+    let mut tac = Command::new("tac")
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
-        .wrap_err("Failed to run kubectl get pods")?;
+        .wrap_err("Failed to run tac")?;
 
-    let tac = Command::new("tac")
-        .stdin(output.stdout.ok_or_else(|| {
-            color_eyre::eyre::eyre!("Failed to capture stdout from kubectl get pods")
-        })?)
-        .output()
-        .wrap_err("Failed to run tac on pods output")?;
+    if let Some(stdin) = tac.stdin.as_mut() {
+        stdin.write_all(pods_output.as_bytes())?;
+    }
 
-    let pods = String::from_utf8(tac.stdout)?
+    let output = tac.wait_with_output().wrap_err("Failed to get tac output")?;
+
+    let pods = String::from_utf8(output.stdout)?
         .replace("Running", "🏃 Running")
         .replace("Error", "❌ Error")
         .replace("Completed", "✅ Completed")
@@ -275,18 +237,8 @@ pub fn get_pods(pod: &FoundPod) -> Result<String> {
 ///
 /// # Errors
 /// Returns an error if the command fails or output is invalid.
-pub fn get_all(pod: &FoundPod) -> Result<String> {
-    let output = Command::new("kubectl")
-        .arg("get")
-        .arg("all")
-        .arg("-n")
-        .arg(&pod.namespace)
-        .arg("--no-headers")
-        .output()
-        .wrap_err("Failed to get all resources")?;
-
-    let all = String::from_utf8(output.stdout)?;
-    Ok(all)
+pub fn get_all(runner: &dyn KubectlRunner, pod: &FoundPod) -> Result<String> {
+    runner.run_commands(&["get", "all", "-n", &pod.namespace, "--no-headers"])
 }
 
 /// Opens the deployment of the given pod in an editor.
@@ -296,19 +248,10 @@ pub fn get_all(pod: &FoundPod) -> Result<String> {
 ///
 /// # Errors
 /// Returns an error if `kubectl edit` fails to spawn or complete.
-pub fn edit_deployment(pod: &FoundPod) -> Result<()> {
-    Command::new("kubectl")
-        .arg("edit")
-        .arg("deployment")
-        .arg(&pod.deployment)
-        .arg("-n")
-        .arg(&pod.namespace)
-        .spawn()
-        .wrap_err("Failed to spawn kubectl edit")?
-        .wait()
-        .wrap_err("Failed to wait for edit process")?;
-
-    Ok(())
+pub fn edit_deployment(runner: &dyn KubectlRunner, pod: &FoundPod) -> Result<()> {
+    runner.spawn_shell(&[
+        "edit", "deployment", &pod.deployment, "-n", &pod.namespace,
+    ])
 }
 
 /// Fetches logs from a given pod, optionally from the last container or limiting output.
@@ -360,18 +303,8 @@ pub fn get_pod_logs(runner: &dyn KubectlRunner, pod: &FoundPod, lite: bool, last
 ///
 /// # Errors
 /// Returns an error if the command fails or the output can't be decoded.
-pub fn describe_pod(pod: &FoundPod) -> Result<String> {
-    let output = Command::new("kubectl")
-        .arg("describe")
-        .arg("pod")
-        .arg(&pod.name)
-        .arg("-n")
-        .arg(&pod.namespace)
-        .output()
-        .wrap_err("Failed to describe pod")?;
-
-    let describe = String::from_utf8(output.stdout)?;
-    Ok(describe)
+pub fn describe_pod(runner: &dyn KubectlRunner, pod: &FoundPod) -> Result<String> {
+    runner.run_commands(&["describe", "pod", &pod.name, "-n", &pod.namespace])
 }
 
 #[cfg(test)]
@@ -414,12 +347,20 @@ mod tests {
                 Ok(self.pod_output.unwrap_or("").to_string())
             }
         }
+
+        fn spawn_shell(&self, args: &[&str]) -> Result<()> {
+            todo!()
+        }
     }
 
     impl KubectlRunner for ErroringTestKubeCtlRunner<'_> {
         fn run_commands(&self, args: &[&str]) -> Result<String> {
             assert_eq!(args, self.expected_args);
             Err(eyre!(EXPECTED_ERROR))
+        }
+        
+        fn spawn_shell(&self, args: &[&str]) -> Result<()> {
+            todo!()
         }
     }
 

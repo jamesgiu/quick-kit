@@ -1,18 +1,40 @@
-use std::{fs, io};
-use std::process::{Command, Stdio};
+use std::{io};
 use std::time::{Duration, Instant};
 use crossterm::event::{DisableMouseCapture, Event, KeyCode};
 use crossterm::{event, execute};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use rand::Rng;
 use ratatui::backend::{Backend, CrosstermBackend};
-use ratatui::text::Line;
+use ratatui::text::{Line, Span};
 use ratatui::{Frame, Terminal};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Stylize;
 use ratatui::style::{Color, Style};
+use color_eyre::eyre::{Result};
 use ratatui::widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
-use crate::{find_matching_pod, FoundPod};
+
+use crate::kubectl::{self, FoundPod, KubectlRunnerAgent};
+use crate::cli::{self};
+
+pub fn render_action_text<'a>(text: &'a str, action: InternalAction, last_action: &Option<InternalAction>) -> Span<'a> {
+    if let Some(last_action) = last_action {
+        if *last_action == action {
+            return format!("{text}").blue();
+        }
+    }
+    
+    format!("{text}").white()
+}
+
+#[derive(PartialEq, Copy, Clone)]
+pub enum InternalAction {
+    FetchLogs,
+    LastLogs,
+    ViewDesc,
+    Purge,
+    World,
+    Switch
+}
 
 #[derive(Default)]
 struct App {
@@ -21,13 +43,15 @@ struct App {
     pub vertical_scroll: usize,
     pub horizontal_scroll: usize,
     pub show_pod_deleted_pop_up: bool,
+    pub show_switch_error_text: bool,
     pub new_pod_search_pop_up: bool,
     pub input_text: String,
     pub target_pod: FoundPod,
     pub emoji: String,
+    pub last_action: Option<InternalAction>,
 }
 
-pub(crate) fn klog(target: FoundPod) -> anyhow::Result<()> {
+pub fn gui(target: FoundPod) -> Result<()> {
 
     // Find pod(s) based on supplied matcher in --all-namespaces
     // SSH can only be one, present list to user? or default to first
@@ -43,6 +67,7 @@ pub(crate) fn klog(target: FoundPod) -> anyhow::Result<()> {
     // create app and run it
     let tick_rate = Duration::from_millis(250);
     let mut app = App::default();
+    app.last_action = Some(InternalAction::FetchLogs);
     app.target_pod = target;
     let res = run_app(&mut terminal, app, tick_rate);
 
@@ -62,221 +87,18 @@ pub(crate) fn klog(target: FoundPod) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn get_pod_logs(pod: &FoundPod, lite: bool, last_container: bool) -> anyhow::Result<String> {
-    let output = {
-        Command::new("kubectl")
-            .arg("logs")
-            .arg(&pod.name)
-            .arg("-n")
-            .arg(&pod.namespace)
-            .arg(if lite {"--tail=500"} else {"--tail=-1"})
-            .arg(if last_container {"--previous=true"} else {"--previous=false"})
-            .output()
-            .expect("failed to execute process")
-    };
-
-    let logs = String::from_utf8(output.stdout).unwrap().to_string();
-
-    Ok(logs)
-}
-
-fn describe_pod(pod: &FoundPod) -> anyhow::Result<String> {
-    let output = {
-        Command::new("kubectl")
-            .arg("describe")
-            .arg("pod")
-            .arg(&pod.name)
-            .arg("-n")
-            .arg(&pod.namespace)
-            .output()
-            .expect("failed to execute process")
-    };
-
-    let describe = String::from_utf8(output.stdout).unwrap().to_string();
-
-    Ok(describe)
-}
-
-fn get_pods(pod: &FoundPod) -> anyhow::Result<String> {
-    let output = {
-        Command::new("kubectl")
-            .arg("get")
-            .arg("pods")
-            .arg("-n")
-            .arg(&pod.namespace)
-            .arg("--sort-by=.status.startTime")
-            .arg("--no-headers")
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap()
-    };
-
-    let tac = {
-        Command::new("tac")
-            .stdin(Stdio::from(output.stdout.unwrap()))
-            .output()
-            .expect("failed to execute process")
-    };
-
-    let pods = String::from_utf8(tac.stdout).unwrap().
-        replace("Running", "🏃 Running").
-        replace("Error", "❌ Error").
-        replace("Completed", "✅ Completed").
-        replace("Terminating", "💀️ Terminating").
-        replace("CrashLoopBackOff", "🔥 CrashLoopBackOff").
-        replace("ImagePullBackOff", "👻 ImagePullBackOff").
-        replace("ContainerCreating", "✨️ ContainerCreating")
-            .to_string();
-
-    Ok(pods)
-}
-
-fn get_all(pod: &FoundPod) -> anyhow::Result<String> {
-    let output = {
-        Command::new("kubectl")
-            .arg("get")
-            .arg("all")
-            .arg("-n")
-            .arg(&pod.namespace)
-            .arg("--no-headers")
-            .output()
-    };
-
-    let all = String::from_utf8(output.unwrap().stdout).unwrap().to_string();
-
-    Ok(all)
-}
-
-fn edit_deployment(pod: &FoundPod) -> anyhow::Result<()> {
-    let output = {
-        Command::new("kubectl")
-            .arg("edit")
-            .arg("deployment")
-            .arg(&pod.deployment)
-            .arg("-n")
-            .arg(&pod.namespace)
-            .spawn()
-            .unwrap()
-            .wait()
-            .expect("failed to execute process")
-    };
-
-    Ok(())
-}
-
-fn delete_pod(pod: &FoundPod) -> anyhow::Result<String> {
-    let output = {
-        Command::new("kubectl")
-            .arg("delete")
-            .arg("pod")
-            .arg(&pod.name)
-            .arg("-n")
-            .arg(&pod.namespace)
-            .arg("--wait=false")
-            .output()
-            .expect("failed to execute process")
-    };
-
-    let delete = String::from_utf8(output.stdout).unwrap().to_string();
-
-    Ok(delete)
-}
-
-fn exec_into_pod(pod: &FoundPod) -> anyhow::Result<()> {
-    let _output = {
-        Command::new("kubectl")
-            .arg("exec")
-            .arg("--stdin")
-            .arg("--tty")
-            .arg(&pod.name)
-            .arg("-n")
-            .arg(&pod.namespace)
-            .arg("--")
-            .arg("/bin/sh")
-            .spawn()
-            .unwrap()
-            .wait()
-            .expect("failed to execute process")
-    };
-
-    Ok(())
-}
-
-fn debug_pod(pod: &FoundPod) -> anyhow::Result<()> {
-    // Get image name.
-    let image_name = String::from_utf8(Command::new("kubectl")
-        .arg("get")
-        .arg("pod")
-        .arg(&pod.name)
-        .arg("-n")
-        .arg(&pod.namespace)
-        .arg("-o=jsonpath={.spec.containers[0].image}")
-        .output()
-        .unwrap()
-        .stdout).unwrap().replace("[ ", "");
-
-    let container_name = String::from_utf8(Command::new("kubectl")
-        .arg("get")
-        .arg("pod")
-        .arg(&pod.name)
-        .arg("-n")
-        .arg(&pod.namespace)
-        .arg("-o=jsonpath={.spec.containers[0].name}")
-        .output()
-        .unwrap()
-        .stdout).unwrap().replace("[ ", "");
-
-    
-    print!("{}", &image_name);
-
-    let _output = {
-        Command::new("kubectl")
-            .arg("debug")
-            .arg(&pod.name)
-            .arg("-n")
-            .arg(&pod.namespace)
-            .arg("-it")
-            .arg(format!("--image={}", &image_name))
-            .arg(format!("--target={}", &container_name))
-            .arg("--")
-            .arg("sh")
-            .spawn()
-            .unwrap()
-            .wait()
-            .expect("failed to execute process")
-    };
-
-    Ok(())
-}
-
-
-fn open_in_vim(pod: &FoundPod) -> anyhow::Result<()> {
-    let logs = get_pod_logs(pod, false, false).unwrap();
-    let name = &pod.name;
-    let fname = format!("/tmp/klog_{name}");
-    fs::write(&fname, logs).expect("Unable to write file");
-    let _output = {
-        Command::new("vim")
-            .arg(&fname)
-            .spawn()
-            .unwrap()
-            .wait()
-            .expect("failed to execute process")
-    };
-
-    Ok(())
-}
 fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app: App,
     tick_rate: Duration
-) -> io::Result<()> {
+) -> Result<String> {
     let mut last_tick = Instant::now();
     let mut fetch_new_logs = false;
     let mut fetch_prev_container_logs = false;
     let mut delete_pod_next_tick = false;
     let mut reset_scroll = true;
-    let mut text = get_pod_logs(&app.target_pod, true, false).unwrap();
+    let runner = KubectlRunnerAgent;
+    let mut text = kubectl::get_pod_logs(&runner, &app.target_pod, true, false)?;
     let icons = ["🐝", "🦀", "🐋", "🐧", "🦕", "🦐", "🐬", "🦞", "🤖", "🐤", "🪿"]; 
     // Create a random number generator
     let mut rng = rand::rng();
@@ -295,13 +117,13 @@ fn run_app<B: Backend>(
         }
 
         if fetch_prev_container_logs {
-            text = get_pod_logs(&app.target_pod, true, true).unwrap();
+            text = kubectl::get_pod_logs(&runner, &app.target_pod, true, true)?;
             fetch_prev_container_logs = false;
             reset_scroll = true;
         }
 
         if fetch_new_logs {
-            text = get_pod_logs(&app.target_pod, true, false).unwrap();
+            text = kubectl::get_pod_logs(&runner, &app.target_pod, true, false)?;
             fetch_new_logs = false;
             reset_scroll = true;
         }
@@ -309,7 +131,7 @@ fn run_app<B: Backend>(
         if delete_pod_next_tick {
             text = text + "\nDeleted :(. Press 'q' to quit.";
             app.show_pod_deleted_pop_up = true;
-            delete_pod(&app.target_pod).unwrap();
+            kubectl::delete_pod(&runner, &app.target_pod).unwrap();
             delete_pod_next_tick = false;
             reset_scroll = true;
         }
@@ -329,11 +151,22 @@ fn run_app<B: Backend>(
                             app.input_text.clear();
                         }
                         KeyCode::Enter => {
-                            app.new_pod_search_pop_up = false;
-                            app.target_pod = find_matching_pod(app.input_text.as_str()).unwrap();
-                            fetch_new_logs = true;
-                            app.vertical_scroll = 0;
-                            app.input_text.clear();
+                            let matching_pod_result = kubectl::find_matching_pod(&runner, app.input_text.as_str());
+                            match matching_pod_result {
+                                Ok(matching_pod) => {
+                                    app.target_pod = matching_pod;
+                                    fetch_new_logs = true;
+                                    app.last_action = Some(InternalAction::FetchLogs);
+                                    app.vertical_scroll = 0;
+                                    app.input_text.clear();
+                                    app.show_switch_error_text = false;
+                                    app.new_pod_search_pop_up = false;
+                                },
+                                Err(_) => {
+                                    app.input_text.clear(); 
+                                    app.show_switch_error_text = true;
+                                }
+                            }
                         }
                         KeyCode::Backspace => {
                             app.input_text.pop();
@@ -342,50 +175,57 @@ fn run_app<B: Backend>(
                     }
                 } else {
                     match key.code {
-                        KeyCode::Char('q') => return Ok(()),
+                        KeyCode::Char('q') => return Ok("quit".to_string()),
                         KeyCode::Char('s') => {
-                            app.new_pod_search_pop_up = true
+                            app.new_pod_search_pop_up = true;
+                            app.last_action = Some(InternalAction::Switch);
                         }
                         KeyCode::Char('f') => {
-                            fetch_new_logs = true
+                            fetch_new_logs = true;
+                            app.last_action = Some(InternalAction::FetchLogs);
                         },
                         KeyCode::Char('p') => {
                             delete_pod_next_tick = true;
+                            app.last_action = Some(InternalAction::Purge);
                         },
                         KeyCode::Char('d') => {
-                            text = describe_pod(&app.target_pod).unwrap();
+                            text = kubectl::describe_pod(&runner, &app.target_pod).unwrap();
                             app.vertical_scroll = 0;
+                            app.last_action = Some(InternalAction::ViewDesc);
                         },
                         KeyCode::Char('E') => {
                             terminal.clear().unwrap();
-                            edit_deployment(&app.target_pod).unwrap();
+                            kubectl::edit_deployment(&runner, &app.target_pod).unwrap();
                             terminal.clear().unwrap();
                         },
                         KeyCode::Char('w') => {
-                            text = get_pods(&app.target_pod).unwrap();
+                            text = kubectl::get_pods(&runner, &app.target_pod).unwrap();
                             app.vertical_scroll = 0;
+                            app.last_action = Some(InternalAction::World);
                         },
                         KeyCode::Char('W') => {
-                            text = get_all(&app.target_pod).unwrap();
+                            text = kubectl::get_all(&runner, &app.target_pod).unwrap();
                             app.vertical_scroll = 0;
+                            app.last_action = Some(InternalAction::World);
                         },
                         KeyCode::Char('e') => {
                             terminal.clear().unwrap();
-                            exec_into_pod(&app.target_pod).unwrap();
+                            kubectl::exec_into_pod(&runner, &app.target_pod).unwrap();
                             terminal.clear().unwrap();
                         },
                         KeyCode::Char('b') => {
                             terminal.clear().unwrap();
-                            debug_pod(&app.target_pod).unwrap();
+                            kubectl::debug_pod(&runner, &app.target_pod).unwrap();
                             terminal.clear().unwrap();
                         },
                         KeyCode::Char('v') => {
                             terminal.clear().unwrap();
-                            open_in_vim(&app.target_pod).unwrap();
+                            cli::open_in_vim(&runner, &app.target_pod).unwrap();
                             terminal.clear().unwrap();
                         },
                         KeyCode::Char('l') => {
                             fetch_prev_container_logs = true;
+                            app.last_action = Some(InternalAction::LastLogs);
                         },
                         KeyCode::Char('j') | KeyCode::Down => {
                             if app.vertical_scroll + 1 < text.lines().count() {
@@ -427,8 +267,11 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
     let pod_name = &app.target_pod.name;
     let pod_deployment = &app.target_pod.deployment;
     let pod_ns = &app.target_pod.namespace;
+    let last_action = &app.last_action;
 
-    let details_content = "📜 [f]etch logs 📖 [l]ast logs 📝 [v]im logs";
+    let details_content = vec![render_action_text("📜 [f]etch logs ", InternalAction::FetchLogs, last_action),
+                                              render_action_text("📖 [l]ast logs ", InternalAction::LastLogs, last_action),
+                                              Span::from("📝 [v]im logs")];
 
     let chunks = Layout::vertical([
         Constraint::Min(1),
@@ -444,10 +287,17 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
         .block(
             Block::bordered().white()
             .title_top(Line::from(format!("{0} {pod_ns}/{pod_deployment}/{pod_name}", app.emoji)).left_aligned().bold().white())
-            .title_top(Line::from(format!("🔎 [d]esc 💻 [e]xec ✏️ [E]dit 🐞 de[b]ug 💀 [p]urge [q]uit ✖️")).right_aligned().white())
+            .title_top(Line::from(vec![
+                render_action_text("🔎 [d]esc ", InternalAction::ViewDesc, last_action),
+                Span::from("💻 [e]xec "),
+                Span::from("✏️ [E]dit "),
+                Span::from("🐞 de[b]ug "),
+                render_action_text("💀 [p]urge ", InternalAction::Purge, last_action),
+                Span::from("[q]uit ✖️")]).right_aligned().white())
             .title_bottom(details_content).to_owned()
-            .title_bottom(Line::from(format!("🗺️ [W/w]orld [s]witch ⚙️").white()).right_aligned())
-            )
+            .title_bottom(Line::from(vec![
+                render_action_text("🗺️ [W/w]orld ", InternalAction::World, last_action),
+                render_action_text("[s]witch ⚙️", InternalAction::Switch, last_action)]).white().right_aligned()))
         .style(Style::default().fg(Color::Rgb(186, 186, 186)))
         .scroll((app.vertical_scroll as u16, app.horizontal_scroll as u16))
         .wrap(Wrap { trim: true });
@@ -470,7 +320,10 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
     }
 
     if app.new_pod_search_pop_up {
-        let block = Block::bordered().title("🔎 Enter new pod matcher (ESC to close)").on_black();
+        let mut block = Block::bordered().title("🔎 Enter new pod matcher (ESC to close)").on_black();
+        if app.show_switch_error_text {
+            block = Block::bordered().title("❌ Pod not found! Please search again.").on_red();
+        }
         let area = centered_rect(60, 20, f.size());
 
         let input = Paragraph::new(app.input_text.as_str().white())

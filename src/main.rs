@@ -1,10 +1,11 @@
-mod klog;
+mod kubectl;
+mod cli;
+mod gui;
 
-use anyhow::{Result};
-use clap::Parser;
-use std::process::{Command};
-use regex::{Captures, Regex};
-use klog::klog;
+use color_eyre::{config::HookBuilder, eyre::Result};
+use clap::{command, Parser};
+
+use crate::kubectl::KubectlRunnerAgent;
 
 /// Program to execute kubectl commands on resources, using regex matching.
 #[derive(Parser, Debug)]
@@ -14,68 +15,16 @@ struct Args {
     matcher: String
 }
 
-#[derive(Default)]
-struct FoundPod {
-    name: String,
-    namespace: String,
-    deployment: String
-}
-
 fn main() -> Result<()> {
+    HookBuilder::default()
+    .display_env_section(false)  // remove env advice
+    .panic_section(false)        // remove panic section
+    .display_location_section(false) // THIS hides file:line info
+    .install()?;
+
     let args = Args::parse();
 
-    let pod = find_matching_pod(&args.matcher).unwrap();
-    klog(pod).unwrap();
+    let pod = kubectl::find_matching_pod(&KubectlRunnerAgent{}, &args.matcher)?;
 
-    Ok(())
-}
-
-fn find_matching_pod(matcher: &str) -> Result<FoundPod> {
-    let output = {
-        Command::new("kubectl")
-            .arg("get")
-            .arg("pods")
-            .arg("--all-namespaces")
-            .output()
-            .expect("failed to execute process")
-    };
-
-    let pods = String::from_utf8(output.stdout).unwrap().to_string();
-
-    let mut re = Regex::new(&format!(r"(\b.*\b)( .*{matcher}.*-[0-9A-Za-z-]+)")).unwrap();
-
-    // First match will be namespace, second will be pod
-    let Some(matches): Option<Captures> = re.captures(&*pods) else { todo!() };
-
-    let pod: String = matches[2].replace(" ", "");
-    let ns: String = matches[1].to_string();
-
-    let deployment_output = {
-        Command::new("kubectl")
-            .arg("get")
-            .arg("deployments")
-            .arg("-n")
-            .arg(&ns)
-            .output()
-            .expect("failed to execute process")
-    };
-
-    let deployments = String::from_utf8(deployment_output.stdout).unwrap().to_string();
-
-    // Strip numbers and dashes from the matcher
-    let sanitised_matcher = Regex::new(r"\-+[0-9]+").unwrap().replace_all(matcher, "");
-
-    re = Regex::new(&format!(r"[A-Za-z-]*{sanitised_matcher}[A-Za-z-]* ")).unwrap();
-
-    let Some(deployment_matches): Option<Captures> = re.captures(&*deployments) else { todo!() };
-
-    let deployment: String = deployment_matches[0].to_string().replace(" ", "");
-
-    let found_pod : FoundPod = FoundPod {
-        name: pod,
-        namespace: ns,
-        deployment: deployment
-    };
-
-    Ok(found_pod)
+    Ok(gui::gui(pod)?)
 }

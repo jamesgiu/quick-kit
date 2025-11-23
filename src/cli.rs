@@ -18,3 +18,5 @@ pub fn open_in_vim(runner: &dyn KubectlRunner, pod: &FoundPod) -> Result<()> {
 
     Ok(())
 }
+
+

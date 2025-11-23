@@ -287,7 +287,7 @@ pub fn get_pod_logs(runner: &dyn KubectlRunner, pod: &FoundPod, lite: bool, last
             Ok(logs)
         },
         Err(err) => {
-            Err(err.wrap_err(KubeError::ResourceExecutionIssue(pod.name.to_string(), pod.namespace.to_string())).into())
+            Err(err.wrap_err(KubeError::ResourceExecutionIssue(pod.name.to_string(), pod.namespace.to_string())))
         }
     }
 
@@ -310,7 +310,7 @@ pub fn describe_pod(runner: &dyn KubectlRunner, pod: &FoundPod) -> Result<String
 #[cfg(test)]
 mod tests {
     use color_eyre::eyre;
-    use crate::kubectl::{get_pod_logs, tests::eyre::eyre, FoundPod};
+    use crate::kubectl::{FoundPod, delete_pod, describe_pod, exec_into_pod, get_all, get_pod_logs, tests::eyre::eyre};
     use color_eyre::eyre::{Result};
 
     use crate::kubectl::{find_matching_deployment, find_matching_pod, KubeError, KubectlRunner};
@@ -335,6 +335,7 @@ mod tests {
             unsafe { assert_eq!(args, self.expected_args[COUNTER]) };
             unsafe { COUNTER += 1 };
 
+            // Below examples are more sophistacted as they are required for chaining calls/substringing.
             if args.contains(&"pods") {
                 Ok(String::from(
                     "namespace api-server-hello-123456\nnamespace2 something-else-abc",
@@ -349,7 +350,10 @@ mod tests {
         }
 
         fn spawn_shell(&self, args: &[&str]) -> Result<()> {
-            todo!()
+            unsafe { assert_eq!(args, self.expected_args[COUNTER]) };
+            unsafe { COUNTER += 1 };
+            
+            Ok(())
         }
     }
 
@@ -360,7 +364,8 @@ mod tests {
         }
         
         fn spawn_shell(&self, args: &[&str]) -> Result<()> {
-            todo!()
+            assert_eq!(args, self.expected_args);
+            Err(eyre!(EXPECTED_ERROR))
         }
     }
 
@@ -372,8 +377,7 @@ mod tests {
         let matched_result = find_matching_deployment(
             &mut TestKubeCtlRunner {
                 expected_args: vec!(&["get", "deployments", "-n", namespace]),
-                pod_output: None,
-                ..Default::default()
+                pod_output: None
             },
             matcher,
             namespace,
@@ -390,8 +394,7 @@ mod tests {
         let matched_result = find_matching_deployment(
             &mut TestKubeCtlRunner {
                 expected_args: vec!(&["get", "deployments", "-n", namespace]),
-                pod_output: None,
-                ..Default::default()
+                pod_output: None
             },
             matcher,
             namespace,
@@ -426,7 +429,6 @@ mod tests {
         let matched_result = find_matching_pod(&mut TestKubeCtlRunner {
             expected_args: vec!(&["get", "pods", "--all-namespaces"], &["get", "deployments", "-n", "namespace"]),
             pod_output: None,
-            ..Default::default()
         }, matcher)
         .unwrap();
 
@@ -487,7 +489,6 @@ mod tests {
         assert_eq!("these are some logs", result.unwrap().to_string())
     }
 
-
     #[test]
     fn test_get_pod_logs_error() {
         unsafe { COUNTER = 0 };
@@ -506,5 +507,179 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(KubeError::ResourceExecutionIssue(pod.name, pod.namespace).to_string(), result.err().unwrap().to_string())
+    }
+
+    #[test]
+    fn test_exec_into_pod_success() {
+        unsafe { COUNTER = 0 };
+
+        let expected_pod = FoundPod {
+            name: "pod".to_string(),
+            namespace: "namespace".to_string(),
+            deployment: "deployment".to_string()
+        };
+
+        let args = ["exec", "--stdin", "--tty", &expected_pod.name, "-n", &expected_pod.namespace, "--", "/bin/sh"];
+
+        let test_kubectl_runner = TestKubeCtlRunner {
+            expected_args: vec!(&args),
+            pod_output: None,
+        };
+
+        let result = exec_into_pod(&test_kubectl_runner, &expected_pod);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_exec_into_pod_failure() {
+        unsafe { COUNTER = 0 };
+
+        let expected_pod = FoundPod {
+            name: "pod".to_string(),
+            namespace: "namespace".to_string(),
+            deployment: "deployment".to_string()
+        };
+
+        let args = &["exec", "--stdin", "--tty", &expected_pod.name, "-n", &expected_pod.namespace, "--", "/bin/sh"];
+
+        let test_kubectl_runner = ErroringTestKubeCtlRunner {
+            expected_args: args
+        };
+
+        let result = exec_into_pod(&test_kubectl_runner, &expected_pod);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_describe_pod_success() {
+        unsafe { COUNTER = 0 };
+
+        let expected_pod = FoundPod {
+            name: "pod".to_string(),
+            namespace: "namespace".to_string(),
+            deployment: "deployment".to_string()
+        };
+
+        let args = ["describe", "pod", &expected_pod.name, "-n", &expected_pod.namespace];
+
+        let test_kubectl_runner = TestKubeCtlRunner {
+            expected_args: vec!(&args),
+            pod_output: Some("some description"),
+        };
+
+        let result = describe_pod(&test_kubectl_runner, &expected_pod);
+
+        assert!(result.is_ok());
+        assert_eq!(test_kubectl_runner.pod_output.unwrap(), result.unwrap())
+    }
+
+    #[test]
+    fn test_describe_pod_failure() {
+        unsafe { COUNTER = 0 };
+
+        let expected_pod = FoundPod {
+            name: "pod".to_string(),
+            namespace: "namespace".to_string(),
+            deployment: "deployment".to_string()
+        };
+
+        let args = &["describe", "pod", &expected_pod.name, "-n", &expected_pod.namespace];
+
+        let test_kubectl_runner = ErroringTestKubeCtlRunner {
+            expected_args: args
+        };
+
+        let result = describe_pod(&test_kubectl_runner, &expected_pod);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_get_all_pods_success() {
+        unsafe { COUNTER = 0 };
+
+        let expected_pod = FoundPod {
+            name: "pod".to_string(),
+            namespace: "namespace".to_string(),
+            deployment: "deployment".to_string()
+        };
+
+        let args = ["get", "all", "-n", &expected_pod.namespace, "--no-headers"];
+
+        let test_kubectl_runner = TestKubeCtlRunner {
+            expected_args: vec!(&args),
+            pod_output: Some("all pods"),
+        };
+
+        let result = get_all(&test_kubectl_runner, &expected_pod);
+
+        assert!(result.is_ok());
+        assert_eq!(test_kubectl_runner.pod_output.unwrap(), result.unwrap())
+    }
+
+    #[test]
+    fn test_get_all_pods_failure() {
+        unsafe { COUNTER = 0 };
+
+        let expected_pod = FoundPod {
+            name: "pod".to_string(),
+            namespace: "namespace".to_string(),
+            deployment: "deployment".to_string()
+        };
+
+        let args = &["get", "all", "-n", &expected_pod.namespace, "--no-headers"];
+
+        let test_kubectl_runner = ErroringTestKubeCtlRunner {
+            expected_args: args
+        };
+
+        let result = get_all(&test_kubectl_runner, &expected_pod);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_delete_pod_success() {
+        unsafe { COUNTER = 0 };
+
+        let expected_pod = FoundPod {
+            name: "pod".to_string(),
+            namespace: "namespace".to_string(),
+            deployment: "deployment".to_string()
+        };
+
+        let args = ["delete", "pod", &expected_pod.name, "-n", &expected_pod.namespace, "--wait=false"];
+
+        let test_kubectl_runner = TestKubeCtlRunner {
+            expected_args: vec!(&args),
+            pod_output: None,
+        };
+
+        let result = delete_pod(&test_kubectl_runner, &expected_pod);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_delete_pod_failure() {
+        unsafe { COUNTER = 0 };
+
+        let expected_pod = FoundPod {
+            name: "pod".to_string(),
+            namespace: "namespace".to_string(),
+            deployment: "deployment".to_string()
+        };
+
+        let args = &["delete", "pod", &expected_pod.name, "-n", &expected_pod.namespace, "--wait=false"];
+
+        let test_kubectl_runner = ErroringTestKubeCtlRunner {
+            expected_args: args
+        };
+
+        let result = delete_pod(&test_kubectl_runner, &expected_pod);
+
+        assert!(result.is_err());
     }
 }

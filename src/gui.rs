@@ -12,8 +12,9 @@ use ratatui::prelude::Stylize;
 use ratatui::style::{Color, Style};
 use color_eyre::eyre::{Result};
 use ratatui::widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
+use regex::Regex;
 
-use crate::kubectl::{self, FoundPod, KubectlRunnerAgent};
+use crate::kubectl::{self, FoundPod, KubectlRunnerAgent, describe_pod};
 use crate::cli::{self};
 
 pub fn render_action_text<'a>(text: &'a str, action: InternalAction, last_action: &Option<InternalAction>) -> Span<'a> {
@@ -48,6 +49,7 @@ struct App {
     pub input_text: String,
     pub target_pod: FoundPod,
     pub emoji: String,
+    pub pod_status: String,
     pub last_action: Option<InternalAction>,
 }
 
@@ -102,6 +104,10 @@ fn run_app<B: Backend>(
     let icons = ["🐝", "🦀", "🐋", "🐧", "🦕", "🦐", "🐬", "🦞", "🤖", "🐤", "🪿"]; 
     // Create a random number generator
     let mut rng = rand::rng();
+    // Get pod status
+    let status_regex = Regex::new(&format!(
+        r"Status:\s+[0-9A-Za-z-]+"
+    ))?;
 
     // Generate a random index within the array bounds
     let index = rng.random_range(0..icons.len());
@@ -109,6 +115,19 @@ fn run_app<B: Backend>(
     app.emoji = emoji.to_string();
 
     loop {
+        // FIXME add error handling, break out into own kubectl function for get status, reuse str replace.
+        let desc = describe_pod(&runner, &app.target_pod);
+        app.pod_status = status_regex.captures(&desc.unwrap()).unwrap().get(0).unwrap().as_str().to_string()
+        .replace("Status:", "")
+        .replace(" ", "")
+        .replace("Running", "🏃 Running")
+        .replace("Error", "❌ Error")
+        .replace("Completed", "✅ Completed")
+        .replace("Terminating", "💀️ Terminating")
+        .replace("CrashLoopBackOff", "🔥 CrashLoopBackOff")
+        .replace("ImagePullBackOff", "👻 ImagePullBackOff")
+        .replace("ContainerCreating", "✨️ ContainerCreating");
+
         if reset_scroll {
             if text.lines().count() > 0 {
                 app.vertical_scroll = text.lines().count() - 1;
@@ -286,7 +305,7 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
         .gray()
         .block(
             Block::bordered().white()
-            .title_top(Line::from(format!("{0} {pod_ns}/{pod_deployment}/{pod_name}", app.emoji)).left_aligned().bold().white())
+            .title_top(Line::from(format!("{0} {pod_ns}/{pod_deployment}/{pod_name} ({1})", app.emoji, app.pod_status)).left_aligned().bold().white())
             .title_top(Line::from(vec![
                 render_action_text("🔎 [d]esc ", InternalAction::ViewDesc, last_action),
                 Span::from("💻 [e]xec "),

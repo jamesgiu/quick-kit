@@ -87,6 +87,29 @@ pub fn find_matching_deployment(runner: &dyn KubectlRunner, matcher: &str, names
     }
 }
 
+pub fn get_pod_status(runner: &dyn KubectlRunner, pod: &FoundPod) -> Result<String> {
+     // Get pod status
+    let status_regex = Regex::new(&format!(
+        r"Status:\s+[0-9A-Za-z-]+"
+    ))?;
+
+    let desc = describe_pod(runner, &pod)?;
+
+    match status_regex.captures(&desc) {
+        Some(matched_term) => {
+            Ok(
+            pod_status_decorator(matched_term.get(0)
+            .ok_or_else( || color_eyre::eyre::eyre!("No pod status found"))?
+            .as_str()
+            .to_string()
+            .replace("Status:", "")
+            .replace(" ", ""))
+            )
+        },
+        None => Err(KubeError::ResourceExecutionIssue(pod.name.clone(), pod.namespace.clone()).into()),
+    }
+}
+
 /// Finds a pod by using a matcher string across all namespaces.
 ///
 /// # Arguments
@@ -215,16 +238,20 @@ pub fn get_pods(runner: &dyn KubectlRunner, pod: &FoundPod) -> Result<String> {
 
     let output = tac.wait_with_output().wrap_err("Failed to get tac output")?;
 
-    let pods = String::from_utf8(output.stdout)?
-        .replace("Running", "🏃 Running")
-        .replace("Error", "❌ Error")
-        .replace("Completed", "✅ Completed")
-        .replace("Terminating", "💀️ Terminating")
-        .replace("CrashLoopBackOff", "🔥 CrashLoopBackOff")
-        .replace("ImagePullBackOff", "👻 ImagePullBackOff")
-        .replace("ContainerCreating", "✨️ ContainerCreating");
-
+    let pods = pod_status_decorator(String::from_utf8(output.stdout)?);
+       
     Ok(pods)
+}
+
+fn pod_status_decorator(status: String) -> String {
+    return status
+    .replace("Running", "🏃 Running")
+    .replace("Error", "❌ Error")
+    .replace("Completed", "✅ Completed")
+    .replace("Terminating", "💀️ Terminating")
+    .replace("CrashLoopBackOff", "🔥 CrashLoopBackOff")
+    .replace("ImagePullBackOff", "👻 ImagePullBackOff")
+    .replace("ContainerCreating", "✨️ ContainerCreating");
 }
 
 /// Lists all resources in the pod's namespace (no headers).

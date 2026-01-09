@@ -5,13 +5,15 @@ use crossterm::{event, execute};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use rand::Rng;
 use ratatui::backend::{Backend, CrosstermBackend};
+use ratatui::style::palette::tailwind;
 use ratatui::text::{Line, Span};
 use ratatui::{Frame, Terminal};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Stylize;
 use ratatui::style::{Color, Style};
 use color_eyre::eyre::{Result};
-use ratatui::widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
+use ratatui::widgets::{Block, Clear, Gauge, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget, Wrap};
+use tui_piechart::{PieChart, PieSlice};
 
 use crate::kubectl::{self, FoundPod, KubectlRunnerAgent, get_pod_status};
 use crate::cli::{self};
@@ -306,6 +308,40 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
         .wrap(Wrap { trim: true });
 
     f.render_widget(paragraph, chunks[1]);
+
+    if app.last_action == Some(InternalAction::World) {
+        let vertical_chunks = Layout::vertical([
+            Constraint::Percentage(5),
+            Constraint::Percentage(90),
+            Constraint::Percentage(5),
+        ])
+            .split(size);
+
+        let horiz_chunks = Layout::horizontal([
+            Constraint::Percentage(60),
+            Constraint::Percentage(40),
+        ])
+            .split(vertical_chunks[1]);
+        
+        // Do really bad way of counting by coutning substr matches
+        let total_pods: f64 = text.lines().count() as f64;
+        let running_pods: f64 = text.matches("🏃").count() as f64;
+        let starting_pods: f64 = text.matches("✨️").count() as f64;
+        // Create slices
+        let slices = vec![
+            PieSlice::new("Failed", (((&total_pods - (&starting_pods + &running_pods)) / &total_pods) * 100.0) + 0.0001, Color::Red),
+            PieSlice::new("Starting", ((&starting_pods / &total_pods) * 100.0) + 0.001, Color::Blue),
+            PieSlice::new("Running", ((&running_pods / &total_pods) * 100.0) + 0.001, Color::Green),
+        ];
+
+        let piechart = PieChart::new(slices)
+        .show_legend(true)
+        .show_percentages(true);
+
+        f.render_widget(Block::new(),  vertical_chunks[0]);
+        f.render_widget(piechart, horiz_chunks[1]);
+    }
+
     f.render_stateful_widget(
         Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))

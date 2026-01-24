@@ -46,6 +46,7 @@ struct App {
     pub horizontal_scroll: usize,
     pub show_pod_deleted_pop_up: bool,
     pub show_switch_error_text: bool,
+    pub show_pie_chart_for_running_pods: bool,
     pub new_pod_search_pop_up: bool,
     pub input_text: String,
     pub target_pod: FoundPod,
@@ -206,11 +207,13 @@ fn run_app<B: Backend>(
                         KeyCode::Char('w') => {
                             text = kubectl::get_pods(&runner, &app.target_pod).unwrap();
                             app.vertical_scroll = 0;
+                            app.show_pie_chart_for_running_pods = true;
                             app.last_action = Some(InternalAction::World);
                         },
                         KeyCode::Char('W') => {
                             text = kubectl::get_all(&runner, &app.target_pod).unwrap();
                             app.vertical_scroll = 0;
+                            app.show_pie_chart_for_running_pods = false;
                             app.last_action = Some(InternalAction::World);
                         },
                         KeyCode::Char('e') => {
@@ -309,11 +312,11 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
 
     f.render_widget(paragraph, chunks[1]);
 
-    if app.last_action == Some(InternalAction::World) {
+    if app.last_action == Some(InternalAction::World) && app.show_pie_chart_for_running_pods == true {
         let vertical_chunks = Layout::vertical([
-            Constraint::Percentage(5),
-            Constraint::Percentage(90),
-            Constraint::Percentage(5),
+            Constraint::Percentage(20),
+            Constraint::Percentage(60),
+            Constraint::Percentage(20),
         ])
             .split(size);
 

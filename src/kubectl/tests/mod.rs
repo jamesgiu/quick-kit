@@ -2,6 +2,7 @@ use super::*;
 
 use color_eyre::eyre;
 use color_eyre::eyre::{Result};
+use crate::kubectl::tests::eyre::eyre;
 
 const EXPECTED_ERROR: &str = "error";
 

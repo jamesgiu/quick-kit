@@ -5,14 +5,13 @@ use crossterm::{event, execute};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use rand::Rng;
 use ratatui::backend::{Backend, CrosstermBackend};
-use ratatui::style::palette::tailwind;
 use ratatui::text::{Line, Span};
 use ratatui::{Frame, Terminal};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::prelude::Stylize;
 use ratatui::style::{Color, Style};
 use color_eyre::eyre::{Result};
-use ratatui::widgets::{Block, Clear, Gauge, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Widget, Wrap};
+use ratatui::widgets::{Block, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap};
 use tui_piechart::{PieChart, PieSlice};
 
 use crate::kubectl::{self, FoundPod, KubectlRunnerAgent, get_pod_status};
@@ -20,7 +19,6 @@ use crate::cli::{self};
 
 // FIXME support pods with no deployments??
 // FIXME updater function
-// FIXME move tests to own file
 
 pub fn render_action_text<'a>(text: &'a str, action: InternalAction, last_action: &Option<InternalAction>) -> Span<'a> {
     if let Some(last_action) = last_action {
@@ -48,12 +46,8 @@ struct App {
     pub horizontal_scroll_state: ScrollbarState,
     pub vertical_scroll: usize,
     pub horizontal_scroll: usize,
-
-    // 🔥 NEW
-    pub scroll_velocity: i32,
     pub is_loading: bool,
     pub emoji_frame: usize,
-
     pub show_pod_deleted_pop_up: bool,
     pub show_switch_error_text: bool,
     pub show_pie_chart_for_running_pods: bool,
@@ -286,7 +280,7 @@ fn run_app<B: Backend>(
 }
 
 fn ui(f: &mut Frame, app: &mut App, text: &str) {
-    let size = f.size();
+    let size = f.area();
     let pod_name = &app.target_pod.name;
     let pod_deployment = &app.target_pod.deployment;
     let pod_ns = &app.target_pod.namespace;
@@ -371,7 +365,7 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
     if app.show_pod_deleted_pop_up {
         let block = Block::bordered().title("💬 Alert").on_blue();
         let message =  Paragraph::new("Pod deleted! Press 'q' to quit. :(".white()).wrap(Wrap { trim: true });
-        let area = centered_rect(60, 20, f.size());
+        let area = centered_rect(60, 20, f.area());
         f.render_widget(Clear, area); //this clears out the background
         f.render_widget(message.clone().block(block), area);
     }
@@ -381,7 +375,7 @@ fn ui(f: &mut Frame, app: &mut App, text: &str) {
         if app.show_switch_error_text {
             block = Block::bordered().title("❌ Pod not found! Please search again.").on_red();
         }
-        let area = centered_rect(60, 20, f.size());
+        let area = centered_rect(60, 20, f.area());
 
         let input = Paragraph::new(app.input_text.as_str().white())
             .style(

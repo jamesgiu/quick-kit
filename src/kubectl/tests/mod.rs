@@ -1,10 +1,7 @@
 use super::*;
 
 use color_eyre::eyre;
-use crate::kubectl::{FoundPod, debug_pod, delete_pod, describe_pod, edit_deployment, exec_into_pod, get_all, get_pod_logs, get_pods, tests::eyre::eyre};
 use color_eyre::eyre::{Result};
-
-use crate::kubectl::{find_matching_deployment, find_matching_pod, KubeError, KubectlRunner};
 
 const EXPECTED_ERROR: &str = "error";
 

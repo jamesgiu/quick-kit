@@ -3,7 +3,7 @@ mod cli;
 mod gui;
 
 use color_eyre::{config::HookBuilder, eyre::Result};
-use clap::{command, Parser};
+use clap::Parser;
 
 use crate::kubectl::KubectlRunnerAgent;
 

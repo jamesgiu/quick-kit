@@ -18,6 +18,10 @@ use tui_piechart::{PieChart, PieSlice};
 use crate::kubectl::{self, FoundPod, KubectlRunnerAgent, get_pod_status};
 use crate::cli::{self};
 
+// FIXME support pods with no deployments??
+// FIXME updater function
+// FIXME move tests to own file
+
 pub fn render_action_text<'a>(text: &'a str, action: InternalAction, last_action: &Option<InternalAction>) -> Span<'a> {
     if let Some(last_action) = last_action {
         if *last_action == action {
@@ -44,6 +48,12 @@ struct App {
     pub horizontal_scroll_state: ScrollbarState,
     pub vertical_scroll: usize,
     pub horizontal_scroll: usize,
+
+    // 🔥 NEW
+    pub scroll_velocity: i32,
+    pub is_loading: bool,
+    pub emoji_frame: usize,
+
     pub show_pod_deleted_pop_up: bool,
     pub show_switch_error_text: bool,
     pub show_pie_chart_for_running_pods: bool,
@@ -54,6 +64,7 @@ struct App {
     pub pod_status: String,
     pub last_action: Option<InternalAction>,
 }
+
 
 pub fn gui(target: FoundPod) -> Result<()> {
 
@@ -103,7 +114,9 @@ fn run_app<B: Backend>(
     let mut reset_scroll = true;
     let runner = KubectlRunnerAgent;
     let mut text = kubectl::get_pod_logs(&runner, &app.target_pod, true, false)?;
-    let icons = ["🐝", "🦀", "🐋", "🐧", "🦕", "🦐", "🐬", "🦞", "🤖", "🐤", "🪿"]; 
+    let icons = ["🐝", "🦀", "🐋", "🐧", "🦕", "🦐", "🐬", "🦞", "🤖", "🐤", "🪿"];
+    app.emoji_frame = rand::rng().random_range(0..icons.len());
+    app.emoji = icons[app.emoji_frame].to_string();
     // Create a random number generator
     let mut rng = rand::rng();
 
@@ -162,6 +175,7 @@ fn run_app<B: Backend>(
                                 Ok(matching_pod) => {
                                     app.target_pod = matching_pod;
                                     fetch_new_logs = true;
+                                    app.is_loading = true;
                                     app.last_action = Some(InternalAction::FetchLogs);
                                     app.vertical_scroll = 0;
                                     app.input_text.clear();
@@ -188,6 +202,7 @@ fn run_app<B: Backend>(
                         }
                         KeyCode::Char('f') => {
                             fetch_new_logs = true;
+                            
                             app.last_action = Some(InternalAction::FetchLogs);
                         },
                         KeyCode::Char('p') => {

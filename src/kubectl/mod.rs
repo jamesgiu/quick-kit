@@ -66,13 +66,13 @@ pub struct FoundPod {
 /// # Errors
 /// Returns an error if `kubectl` fails, the output is invalid UTF-8, or no deployment is found.
 pub fn find_matching_deployment(runner: &dyn KubectlRunner, matcher: &str, namespace: &str) -> Result<String> {
-    let deployments = runner.run_commands(&["get", "deployments", "-n", namespace])?;
+    let deployments = runner.run_commands(&["get", "deployments,rc,rs,ds", "-n", namespace])?;
 
     let sanitised_matcher = Regex::new(r"\-+[0-9]+")?
         .replace_all(matcher, "")
         .to_string();
 
-    let re = Regex::new(&format!(r"[A-Za-z-]*{sanitised_matcher}[A-Za-z-]* "))?;
+    let re = Regex::new(&format!(r"[A-Za-z-/\.]*{sanitised_matcher}[A-Za-z-/\.]* "))?;
 
     match re.captures(&deployments) {
         Some(matches) => {
@@ -139,6 +139,7 @@ pub fn find_matching_pod(runner: &dyn KubectlRunner, matcher: &str) -> Result<Fo
                 .ok_or_else(|| color_eyre::eyre::eyre!("No namespace match found"))?
                 .as_str()
                 .to_string();
+
             let deployment = find_matching_deployment(runner, &matcher, &ns)?;
 
             Ok(FoundPod {
@@ -277,7 +278,7 @@ pub fn get_all(runner: &dyn KubectlRunner, pod: &FoundPod) -> Result<String> {
 /// Returns an error if `kubectl edit` fails to spawn or complete.
 pub fn edit_deployment(runner: &dyn KubectlRunner, pod: &FoundPod) -> Result<()> {
     runner.spawn_shell(&[
-        "edit", "deployment", &pod.deployment, "-n", &pod.namespace,
+        "edit", &pod.deployment, "-n", &pod.namespace,
     ])
 }
 

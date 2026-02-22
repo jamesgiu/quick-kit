@@ -1,6 +1,6 @@
 use std::{fs::File, io::Write};
 
-use color_eyre::eyre::Result;
+use color_eyre::eyre::{Error, Result};
 use reqwest::{Client};
 use serde::Deserialize;
 use reqwest::header::USER_AGENT;
@@ -20,7 +20,7 @@ struct LatestReleaseMeta {
 
 ///
 /// Downloads latest version of QuickKit available for installation.
-pub async fn download_latest() -> Result<()> {
+pub async fn download_latest() -> Result<(), Error> {
     
     let releases_url = "https://api.github.com/repos/jamesgiu/quick-kit/releases/latest";
 

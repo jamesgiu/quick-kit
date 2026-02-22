@@ -16,7 +16,6 @@ use tui_piechart::{PieChart, PieSlice};
 
 use crate::kubectl::{self, FoundPod, KubectlRunnerAgent, get_pod_status};
 use crate::cli::{self};
-use crate::updater;
 
 // FIXME support pods with no deployments??
 // FIXME updater function
@@ -244,11 +243,6 @@ fn run_app<B: Backend>(
                         KeyCode::Char('l') => {
                             fetch_prev_container_logs = true;
                             app.last_action = Some(InternalAction::LastLogs);
-                        },
-                        KeyCode::Char('u') => {
-                            async move {
-                                updater::download_latest().await;
-                            };
                         },
                         KeyCode::Char('j') | KeyCode::Down => {
                             if app.vertical_scroll + 1 < text.lines().count() {

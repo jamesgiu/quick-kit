@@ -100,7 +100,7 @@ fn run_app<B: Backend>(
     terminal: &mut Terminal<B>,
     mut app: App,
     tick_rate: Duration
-) -> Result<String> {
+) -> Result<String> where <B as Backend>::Error: Send, <B as Backend>::Error: Sync, <B as Backend>::Error: 'static, <B as Backend>::Error: 'static {
     let mut last_tick = Instant::now();
     let mut fetch_new_logs = false;
     let mut fetch_prev_container_logs = false;

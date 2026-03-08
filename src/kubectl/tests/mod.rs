@@ -29,7 +29,7 @@ impl KubectlRunner for TestKubeCtlRunner<'_> {
             Ok(String::from(
                 "namespace api-server-hello-123456\nnamespace2 something-else-abc",
             ))
-        } else if args.contains(&"deployments") {
+        } else if args.contains(&"deployments,rc,rs,ds") {
             Ok(String::from(
                 "NAME               READY   UP-TO-DATE   AVAILABLE   AGE\nahoy-api-server   2/2     2            2           100d",
             ))
@@ -65,7 +65,7 @@ fn test_find_matching_deployment_success() {
     let namespace = "namespace";
     let matched_result = find_matching_deployment(
         &mut TestKubeCtlRunner {
-            expected_args: vec!(&["get", "deployments", "-n", namespace]),
+            expected_args: vec!(&["get", "deployments,rc,rs,ds", "-n", namespace]),
             pod_output: None
         },
         matcher,
@@ -82,7 +82,7 @@ fn test_find_matching_deployment_failure() {
     let namespace = "namespace";
     let matched_result = find_matching_deployment(
         &mut TestKubeCtlRunner {
-            expected_args: vec!(&["get", "deployments", "-n", namespace]),
+            expected_args: vec!(&["get", "deployments,rc,rs,ds", "-n", namespace]),
             pod_output: None
         },
         matcher,
@@ -102,7 +102,7 @@ fn test_find_matching_deployment_err() {
     let namespace = "namespace";
     let matched_result = find_matching_deployment(
         &mut ErroringTestKubeCtlRunner {
-            expected_args: &["get", "deployments", "-n", namespace],
+            expected_args: &["get", "deployments,rc,rs,ds", "-n", namespace],
         },
         matcher,
         namespace,
@@ -116,7 +116,7 @@ fn test_find_matching_pod_success() {
     unsafe { COUNTER = 0 };
     let matcher = "api-server";
     let matched_result = find_matching_pod(&mut TestKubeCtlRunner {
-        expected_args: vec!(&["get", "pods", "--all-namespaces"], &["get", "deployments", "-n", "namespace"]),
+        expected_args: vec!(&["get", "pods", "--all-namespaces"], &["get", "deployments,rc,rs,ds", "-n", "namespace"]),
         pod_output: None,
     }, matcher)
     .unwrap();
@@ -132,7 +132,7 @@ fn test_find_matching_pod_not_found() {
     let matcher = "nonexistent";
 
     let result = find_matching_pod(&mut TestKubeCtlRunner {
-        expected_args: vec!(&["get", "pods", "--all-namespaces"], &["get", "deployments", "-n", "namespace"]),
+        expected_args: vec!(&["get", "pods", "--all-namespaces"], &["get", "deployments,rc,rs,ds", "-n", "namespace"]),
         pod_output: Some("namespace pod-abc\nnamespace2 something-else"),
         ..Default::default()
     }, matcher);
@@ -485,7 +485,7 @@ fn test_edit_deployment_success() {
         deployment: "my-deploy".to_string(),
     };
 
-    let expected = ["edit", "deployment", &pod.deployment, "-n", &pod.namespace];
+    let expected = ["edit", &pod.deployment, "-n", &pod.namespace];
 
     let runner = TestKubeCtlRunner {
         expected_args: vec!(&expected),
@@ -507,7 +507,7 @@ fn test_edit_deployment_failure() {
         deployment: "my-deploy".to_string(),
     };
 
-    let args = &["edit", "deployment", &pod.deployment, "-n", &pod.namespace];
+    let args = &["edit", &pod.deployment, "-n", &pod.namespace];
 
     let runner = ErroringTestKubeCtlRunner { expected_args: args };
 

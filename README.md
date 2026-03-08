@@ -5,7 +5,7 @@
 <h3 align="center">qk
 </h3>
   <p align="center">
-    Untested, undocumented, unapologetic utility program to execute `kubectl` commands on a matching pod resource.
+    Mostly untested, undocumented, unapologetic utility program to execute `kubectl` commands on a matching pod resource.
     <br />
   </p>
 </div>
